@@ -5,3 +5,6 @@ I would like to hack my computer with the custom kernel and my scripts. You shou
 
 # Patch file
 This patch file patches Linux kernel source code based version 7.1.0. hehe
+
+# Testing
+I tested on Ubuntu 24.04.4 LTS, which works well. Idk other distributions could work properly with the self built kernel.
