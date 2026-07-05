@@ -11,3 +11,6 @@ Please refer the patch file for more information.
 
 # Testing
 I tested on Ubuntu 24.04.4 LTS, which works well. Idk other distributions could work properly with the self built kernel.
+
+# Issue
+Snap doesn't work
