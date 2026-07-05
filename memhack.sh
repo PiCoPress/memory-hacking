@@ -48,10 +48,14 @@ case $1 in
                 elif [[ $len -eq 0 ]];
                 then
                         echo -e "reading from stdin.."
-                        data=$(cat /dev/stdin)
-                        len=$(getlen "$data")
-                fi
-                echo -e "$data" | writeat $mem $2 $len
+			tmp=$(mktemp)
+                        cat /dev/stdin > $tmp
+			len=$(ls -l | awk '{print $5}')
+			writeat $mem $2 $len < $tmp
+			rm $tmp
+		else
+                	echo -e "$data" | writeat $mem $2 $len
+		fi
                 echo -e "Memory value altered."
         ;;
         set | s )
@@ -175,6 +179,7 @@ case $1 in
                 echo -e "/proc/<PID>/maps\tPID's virtual memory address list"
                 echo -e "/proc/<PID>/pagemap\tmapping between virtual and physical address"
                 echo -e "/proc/<PID>/mem\t"
+				echo -e "/proc/vmallocinfo\t"
         ;;
         * )
                 echo -e "USAGE: memhack [ACTION] [ARGS]..."
