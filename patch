@@ -647,10 +647,21 @@ index 90756dc63..fb4cba0c7 100644
  	/* Permit LSMs and IMA to fail the kexec */
  	result = security_kernel_load_data(LOADING_KEXEC_IMAGE, false);
 diff --git a/kernel/panic.c b/kernel/panic.c
-index 213725b61..fb7a6bae3 100644
+index 213725b61..acf65294d 100644
 --- a/kernel/panic.c
 +++ b/kernel/panic.c
-@@ -285,6 +285,7 @@ void __weak __noreturn nmi_panic_self_stop(struct pt_regs *regs)
+@@ -41,6 +41,10 @@
+ #include <asm/sections.h>
+ #include <kunit/test-bug.h>
+ 
++#ifdef CONFIG_WEAKEN_IGNORE_PANIC
++ #include <linux/objtool.h>
++#endif
++
+ #define PANIC_TIMER_STEP 100
+ #define PANIC_BLINK_SPD 18
+ #define PANIC_MSG_BUFSZ 1024
+@@ -285,6 +289,7 @@ void __weak __noreturn nmi_panic_self_stop(struct pt_regs *regs)
   */
  void __weak crash_smp_send_stop(void)
  {
@@ -658,7 +669,7 @@ index 213725b61..fb7a6bae3 100644
  	static int cpus_stopped;
  
  	/*
-@@ -301,6 +302,7 @@ void __weak crash_smp_send_stop(void)
+@@ -301,6 +306,7 @@ void __weak crash_smp_send_stop(void)
  	 */
  	smp_send_stop();
  	cpus_stopped = 1;
@@ -666,7 +677,7 @@ index 213725b61..fb7a6bae3 100644
  }
  
  atomic_t panic_cpu = ATOMIC_INIT(PANIC_CPU_INVALID);
-@@ -561,10 +563,12 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
+@@ -561,10 +567,12 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
  	 * bits in addition to stopping other CPUs, hence we rely on
  	 * crash_smp_send_stop() for that.
  	 */
@@ -679,7 +690,7 @@ index 213725b61..fb7a6bae3 100644
  }
  
  /**
-@@ -598,6 +602,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -598,6 +606,8 @@ void vpanic(const char *fmt, va_list args)
  	 * after setting panic_cpu) from invoking panic() again.
  	 */
  	local_irq_disable();
@@ -688,7 +699,7 @@ index 213725b61..fb7a6bae3 100644
  	preempt_disable_notrace();
  
  	/* Redirect panic to target CPU if configured via panic_force_cpu=. */
-@@ -609,6 +615,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -609,6 +619,7 @@ void vpanic(const char *fmt, va_list args)
  		set_cpu_online(smp_processor_id(), false);
  		panic_smp_self_stop();
  	}
@@ -696,7 +707,7 @@ index 213725b61..fb7a6bae3 100644
  	/*
  	 * It's possible to come here directly from a panic-assertion and
  	 * not have preempt disabled. Some functions called from here want
-@@ -629,9 +636,14 @@ void vpanic(const char *fmt, va_list args)
+@@ -629,9 +640,14 @@ void vpanic(const char *fmt, va_list args)
  		/* go ahead */
  	} else if (panic_on_other_cpu())
  		panic_smp_self_stop();
@@ -711,7 +722,7 @@ index 213725b61..fb7a6bae3 100644
  	len = vscnprintf(buf, sizeof(buf), fmt, args);
  
  	if (len && buf[len - 1] == '\n')
-@@ -657,6 +669,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -657,6 +673,7 @@ void vpanic(const char *fmt, va_list args)
  	 * the other CPUs or else we won't be able to debug processes left
  	 * running on them.
  	 */
@@ -719,7 +730,7 @@ index 213725b61..fb7a6bae3 100644
  	kgdb_panic(buf);
  
  	/*
-@@ -671,7 +684,9 @@ void vpanic(const char *fmt, va_list args)
+@@ -671,7 +688,9 @@ void vpanic(const char *fmt, va_list args)
  		__crash_kexec(NULL);
  
  	panic_other_cpus_shutdown(_crash_kexec_post_notifiers);
@@ -730,7 +741,7 @@ index 213725b61..fb7a6bae3 100644
  	printk_legacy_allow_panic_sync();
  
  	/*
-@@ -693,8 +708,10 @@ void vpanic(const char *fmt, va_list args)
+@@ -693,8 +712,10 @@ void vpanic(const char *fmt, va_list args)
  	 *
  	 * Bypass the panic_cpu check and call __crash_kexec directly.
  	 */
@@ -741,7 +752,7 @@ index 213725b61..fb7a6bae3 100644
  
  	console_unblank();
  
-@@ -706,7 +723,10 @@ void vpanic(const char *fmt, va_list args)
+@@ -706,7 +727,10 @@ void vpanic(const char *fmt, va_list args)
  	 * should be disabled to avoid reporting bad unlock balance when
  	 * panic() is not being callled from OOPS.
  	 */
@@ -752,7 +763,7 @@ index 213725b61..fb7a6bae3 100644
  	console_flush_on_panic(CONSOLE_FLUSH_PENDING);
  
  	if ((panic_print & SYS_INFO_PANIC_CONSOLE_REPLAY) ||
-@@ -715,7 +735,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -715,7 +739,8 @@ void vpanic(const char *fmt, va_list args)
  
  	if (!panic_blink)
  		panic_blink = no_blink;
@@ -762,7 +773,7 @@ index 213725b61..fb7a6bae3 100644
  	if (panic_timeout > 0) {
  		/*
  		 * Delay timeout seconds before rebooting the machine.
-@@ -742,6 +763,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -742,6 +767,8 @@ void vpanic(const char *fmt, va_list args)
  			reboot_mode = panic_reboot_mode;
  		emergency_restart();
  	}
@@ -771,7 +782,7 @@ index 213725b61..fb7a6bae3 100644
  #ifdef __sparc__
  	{
  		extern int stop_a_enabled;
-@@ -768,6 +791,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -768,6 +795,8 @@ void vpanic(const char *fmt, va_list args)
  	nbcon_atomic_flush_unsafe();
  
  	local_irq_enable();
@@ -780,15 +791,44 @@ index 213725b61..fb7a6bae3 100644
  	for (i = 0; ; i += PANIC_TIMER_STEP) {
  		touch_softlockup_watchdog();
  		if (i >= i_next) {
-@@ -776,6 +801,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -776,9 +805,19 @@ void vpanic(const char *fmt, va_list args)
  		}
  		mdelay(PANIC_TIMER_STEP);
  	}
++#else
++	// __noreturn functions have no ret asm code, so put it manually
++	asm volatile("ret" :::);
 +#endif
  }
  EXPORT_SYMBOL(vpanic);
  
-@@ -1039,6 +1065,10 @@ bool oops_may_print(void)
++#ifdef CONFIG_WEAKEN_IGNORE_PANIC
++// objtool rejects to build vmlinux due to stack frame consistency.
++// Using STACK_FRAME_NON_STANDARD to make it possible.
++STACK_FRAME_NON_STANDARD(vpanic);
++#endif
++
+ /* Identical to vpanic(), except it takes variadic arguments instead of va_list */
+ void panic(const char *fmt, ...)
+ {
+@@ -787,9 +826,16 @@ void panic(const char *fmt, ...)
+ 	va_start(args, fmt);
+ 	vpanic(fmt, args);
+ 	va_end(args);
++#ifdef CONFIG_WEAKEN_IGNORE_PANIC
++	asm volatile("ret" :::);
++#endif
+ }
+ EXPORT_SYMBOL(panic);
+ 
++#ifdef CONFIG_WEAKEN_IGNORE_PANIC
++STACK_FRAME_NON_STANDARD(panic);
++#endif
++
+ #define TAINT_FLAG(taint, _c_true, _c_false)				\
+ 	[ TAINT_##taint ] = {						\
+ 		.c_true = _c_true, .c_false = _c_false,			\
+@@ -1039,6 +1085,10 @@ bool oops_may_print(void)
   */
  void oops_enter(void)
  {
