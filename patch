@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index fae409cd5..31465d727 100644
+index fae409cd5..903c81d65 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -1210,6 +1210,10 @@ include $(addprefix $(srctree)/, $(include-y))
@@ -7,7 +7,7 @@ index fae409cd5..31465d727 100644
  # from the clean source tree, the GCC plugins do not exist at this point.
  
 +ifeq ($(CONFIG_WEAKEN_IGNORE_PANIC),y)
-+KCFLAGS += $(call cc-option,-Wno-error=return-type)
++KCFLAGS += -Wno-error=return-type
 +endif
 +
  # Add user supplied CPPFLAGS, AFLAGS, CFLAGS and RUSTFLAGS as the last assignments
