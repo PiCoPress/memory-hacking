@@ -1,9 +1,24 @@
+diff --git a/Makefile b/Makefile
+index fae409cd5..31465d727 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1210,6 +1210,10 @@ include $(addprefix $(srctree)/, $(include-y))
+ # Do not add $(call cc-option,...) below this line. When you build the kernel
+ # from the clean source tree, the GCC plugins do not exist at this point.
+ 
++ifeq ($(CONFIG_WEAKEN_IGNORE_PANIC),y)
++KCFLAGS += $(call cc-option,-Wno-error=return-type)
++endif
++
+ # Add user supplied CPPFLAGS, AFLAGS, CFLAGS and RUSTFLAGS as the last assignments
+ KBUILD_CPPFLAGS += $(KCPPFLAGS)
+ KBUILD_AFLAGS   += $(KAFLAGS)
 diff --git a/arch/x86/Kconfig.weak b/arch/x86/Kconfig.weak
 new file mode 100644
-index 000000000..863060775
+index 000000000..d90a828f9
 --- /dev/null
 +++ b/arch/x86/Kconfig.weak
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,113 @@
 +# Weakening options for x86 processors
 +
 +config WEAKEN_TASK_CHECK
@@ -42,6 +57,7 @@ index 000000000..863060775
 +	help
 +		Make all pages RWX (__RW | __NX). 
 +		This option will take too long time for re-compiling.
++		Enabling this may cause problem for some applications.
 +	depends on X86
 +
 +config WEAKEN_PAGE_USR
@@ -74,6 +90,22 @@ index 000000000..863060775
 +config WEAKEN_IGNORE_PANIC
 +	bool "Ignore kernel panic and continue execution (DANGEROUS)"
 +	default n
++	help
++		Ignore kernel panic, and continue execution. Technically, 
++		it makes the functions 'vpanic' and 'panic' returnable.
++		So, you need to set Kconfig option "OBJTOOL_WERROR" to N
++		when building.
++		This option will add cflags 'Wno-error=return-type' to KCFLAGS.
++		
++
++config WEAKEN_IGNORE_OOPS
++	bool "Ignore kernel oops and skip instruction (DANGEROUS)"
++	default n
++	help
++		Ignore a kernel oops. Also skip the current instruction 
++		and continue running. This will cause heavy lag with log spam.
++		Therefore, it's not that meaningful option.
++	depends on X86
 +
 +config WEAKEN_OOPS_MSG
 +	bool "Add cooked message when oops"
@@ -242,10 +274,21 @@ index a3df21d26..7529d8d33 100644
  	/*
  	 * The vendor-specific functions might have changed features.
 diff --git a/arch/x86/kernel/dumpstack.c b/arch/x86/kernel/dumpstack.c
-index b10684ded..a834ed621 100644
+index b10684ded..90c3c0d8c 100644
 --- a/arch/x86/kernel/dumpstack.c
 +++ b/arch/x86/kernel/dumpstack.c
-@@ -77,9 +77,10 @@ static int copy_code(struct pt_regs *regs, u8 *buf, unsigned long src,
+@@ -23,6 +23,10 @@
+ #include <asm/stacktrace.h>
+ #include <asm/unwind.h>
+ 
++#ifdef CONFIG_WEAKEN_IGNORE_OOPS
++ #include <asm/insn.h>
++#endif
++
+ static int die_counter;
+ 
+ static struct pt_regs exec_summary_regs;
+@@ -77,9 +81,10 @@ static int copy_code(struct pt_regs *regs, u8 *buf, unsigned long src,
  		return copy_from_kernel_nofault(buf, (u8 *)src, nbytes);
  
  	/* The user space code from other tasks cannot be accessed. */
@@ -257,6 +300,42 @@ index b10684ded..a834ed621 100644
  	/*
  	 * Even if named copy_from_user_nmi() this can be invoked from
  	 * other contexts and will not try to resolve a pagefault, which is
+@@ -404,8 +409,24 @@ void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
+ 	 * Before we rewind the stack, we have to tell KASAN that we're going to
+ 	 * reuse the task stack and that existing poisons are invalid.
+ 	 */
++
++#ifndef CONFIG_WEAKEN_IGNORE_OOPS
+ 	kasan_unpoison_task_stack(current);
+ 	rewind_stack_and_make_dead(signr);
++#else
++	struct insn obj;
++
++	// Skip the instruction, which is the kernel code.
++	insn_init(&obj, regs->ip, MAX_INSN_SIZE, IS_ENABLED(CONFIG_X86_64));
++	if (!insn_get_length(&obj)) regs->ip += obj.length;
++	else
++		goto fallback;
++
++	return;
++fallback:
++	kasan_unpoison_task_stack(current);
++	rewind_stack_and_make_dead(signr);
++#endif
+ }
+ NOKPROBE_SYMBOL(oops_end);
+ 
+@@ -431,6 +452,10 @@ static int __die_body(const char *str, struct pt_regs *regs, long err)
+ 	show_regs(regs);
+ 	print_modules();
+ 
++#ifdef CONFIG_WEAKEN_IGNORE_OOPS
++	printk(KERN_INFO "Kernel die but didn't stop!\n");
++#endif
++
+ 	if (notify_die(DIE_OOPS, str, regs, err,
+ 			current->thread.trap_nr, SIGSEGV) == NOTIFY_STOP)
+ 		return 1;
 diff --git a/arch/x86/kernel/traps.c b/arch/x86/kernel/traps.c
 index 30aa83699..07fdf8e75 100644
 --- a/arch/x86/kernel/traps.c
@@ -548,6 +627,30 @@ index 1023acadd..269e6c63c 100644
  
  	VM_WARN_ON_ONCE(__pa(current_mm->pgd) != read_cr3_pa());
  
+diff --git a/include/linux/panic.h b/include/linux/panic.h
+index f1dd417e5..ac4ecfacd 100644
+--- a/include/linux/panic.h
++++ b/include/linux/panic.h
+@@ -9,10 +9,19 @@
+ struct pt_regs;
+ 
+ extern long (*panic_blink)(int state);
++
++#ifdef CONFIG_WEAKEN_IGNORE_PANIC
++__printf(1, 2)
++void panic(const char *fmt, ...) __cold;
++__printf(1, 0)
++void vpanic(const char *fmt, va_list args) __cold;
++#else
+ __printf(1, 2)
+ void panic(const char *fmt, ...) __noreturn __cold;
+ __printf(1, 0)
+ void vpanic(const char *fmt, va_list args) __noreturn __cold;
++#endif
++
+ void nmi_panic(struct pt_regs *regs, const char *msg);
+ void check_panic_on_warn(const char *origin);
+ extern void oops_enter(void);
 diff --git a/include/linux/uaccess.h b/include/linux/uaccess.h
 index eddbbb65c..c4b7656dd 100644
 --- a/include/linux/uaccess.h
@@ -647,21 +750,10 @@ index 90756dc63..fb4cba0c7 100644
  	/* Permit LSMs and IMA to fail the kexec */
  	result = security_kernel_load_data(LOADING_KEXEC_IMAGE, false);
 diff --git a/kernel/panic.c b/kernel/panic.c
-index 213725b61..acf65294d 100644
+index 213725b61..fb7a6bae3 100644
 --- a/kernel/panic.c
 +++ b/kernel/panic.c
-@@ -41,6 +41,10 @@
- #include <asm/sections.h>
- #include <kunit/test-bug.h>
- 
-+#ifdef CONFIG_WEAKEN_IGNORE_PANIC
-+ #include <linux/objtool.h>
-+#endif
-+
- #define PANIC_TIMER_STEP 100
- #define PANIC_BLINK_SPD 18
- #define PANIC_MSG_BUFSZ 1024
-@@ -285,6 +289,7 @@ void __weak __noreturn nmi_panic_self_stop(struct pt_regs *regs)
+@@ -285,6 +285,7 @@ void __weak __noreturn nmi_panic_self_stop(struct pt_regs *regs)
   */
  void __weak crash_smp_send_stop(void)
  {
@@ -669,7 +761,7 @@ index 213725b61..acf65294d 100644
  	static int cpus_stopped;
  
  	/*
-@@ -301,6 +306,7 @@ void __weak crash_smp_send_stop(void)
+@@ -301,6 +302,7 @@ void __weak crash_smp_send_stop(void)
  	 */
  	smp_send_stop();
  	cpus_stopped = 1;
@@ -677,7 +769,7 @@ index 213725b61..acf65294d 100644
  }
  
  atomic_t panic_cpu = ATOMIC_INIT(PANIC_CPU_INVALID);
-@@ -561,10 +567,12 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
+@@ -561,10 +563,12 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
  	 * bits in addition to stopping other CPUs, hence we rely on
  	 * crash_smp_send_stop() for that.
  	 */
@@ -690,7 +782,7 @@ index 213725b61..acf65294d 100644
  }
  
  /**
-@@ -598,6 +606,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -598,6 +602,8 @@ void vpanic(const char *fmt, va_list args)
  	 * after setting panic_cpu) from invoking panic() again.
  	 */
  	local_irq_disable();
@@ -699,7 +791,7 @@ index 213725b61..acf65294d 100644
  	preempt_disable_notrace();
  
  	/* Redirect panic to target CPU if configured via panic_force_cpu=. */
-@@ -609,6 +619,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -609,6 +615,7 @@ void vpanic(const char *fmt, va_list args)
  		set_cpu_online(smp_processor_id(), false);
  		panic_smp_self_stop();
  	}
@@ -707,7 +799,7 @@ index 213725b61..acf65294d 100644
  	/*
  	 * It's possible to come here directly from a panic-assertion and
  	 * not have preempt disabled. Some functions called from here want
-@@ -629,9 +640,14 @@ void vpanic(const char *fmt, va_list args)
+@@ -629,9 +636,14 @@ void vpanic(const char *fmt, va_list args)
  		/* go ahead */
  	} else if (panic_on_other_cpu())
  		panic_smp_self_stop();
@@ -722,7 +814,7 @@ index 213725b61..acf65294d 100644
  	len = vscnprintf(buf, sizeof(buf), fmt, args);
  
  	if (len && buf[len - 1] == '\n')
-@@ -657,6 +673,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -657,6 +669,7 @@ void vpanic(const char *fmt, va_list args)
  	 * the other CPUs or else we won't be able to debug processes left
  	 * running on them.
  	 */
@@ -730,7 +822,7 @@ index 213725b61..acf65294d 100644
  	kgdb_panic(buf);
  
  	/*
-@@ -671,7 +688,9 @@ void vpanic(const char *fmt, va_list args)
+@@ -671,7 +684,9 @@ void vpanic(const char *fmt, va_list args)
  		__crash_kexec(NULL);
  
  	panic_other_cpus_shutdown(_crash_kexec_post_notifiers);
@@ -741,7 +833,7 @@ index 213725b61..acf65294d 100644
  	printk_legacy_allow_panic_sync();
  
  	/*
-@@ -693,8 +712,10 @@ void vpanic(const char *fmt, va_list args)
+@@ -693,8 +708,10 @@ void vpanic(const char *fmt, va_list args)
  	 *
  	 * Bypass the panic_cpu check and call __crash_kexec directly.
  	 */
@@ -752,7 +844,7 @@ index 213725b61..acf65294d 100644
  
  	console_unblank();
  
-@@ -706,7 +727,10 @@ void vpanic(const char *fmt, va_list args)
+@@ -706,7 +723,10 @@ void vpanic(const char *fmt, va_list args)
  	 * should be disabled to avoid reporting bad unlock balance when
  	 * panic() is not being callled from OOPS.
  	 */
@@ -763,7 +855,7 @@ index 213725b61..acf65294d 100644
  	console_flush_on_panic(CONSOLE_FLUSH_PENDING);
  
  	if ((panic_print & SYS_INFO_PANIC_CONSOLE_REPLAY) ||
-@@ -715,7 +739,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -715,7 +735,8 @@ void vpanic(const char *fmt, va_list args)
  
  	if (!panic_blink)
  		panic_blink = no_blink;
@@ -773,7 +865,7 @@ index 213725b61..acf65294d 100644
  	if (panic_timeout > 0) {
  		/*
  		 * Delay timeout seconds before rebooting the machine.
-@@ -742,6 +767,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -742,6 +763,8 @@ void vpanic(const char *fmt, va_list args)
  			reboot_mode = panic_reboot_mode;
  		emergency_restart();
  	}
@@ -782,7 +874,7 @@ index 213725b61..acf65294d 100644
  #ifdef __sparc__
  	{
  		extern int stop_a_enabled;
-@@ -768,6 +795,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -768,6 +791,8 @@ void vpanic(const char *fmt, va_list args)
  	nbcon_atomic_flush_unsafe();
  
  	local_irq_enable();
@@ -791,44 +883,15 @@ index 213725b61..acf65294d 100644
  	for (i = 0; ; i += PANIC_TIMER_STEP) {
  		touch_softlockup_watchdog();
  		if (i >= i_next) {
-@@ -776,9 +805,19 @@ void vpanic(const char *fmt, va_list args)
+@@ -776,6 +801,7 @@ void vpanic(const char *fmt, va_list args)
  		}
  		mdelay(PANIC_TIMER_STEP);
  	}
-+#else
-+	// __noreturn functions have no ret asm code, so put it manually
-+	asm volatile("ret" :::);
 +#endif
  }
  EXPORT_SYMBOL(vpanic);
  
-+#ifdef CONFIG_WEAKEN_IGNORE_PANIC
-+// objtool rejects to build vmlinux due to stack frame consistency.
-+// Using STACK_FRAME_NON_STANDARD to make it possible.
-+STACK_FRAME_NON_STANDARD(vpanic);
-+#endif
-+
- /* Identical to vpanic(), except it takes variadic arguments instead of va_list */
- void panic(const char *fmt, ...)
- {
-@@ -787,9 +826,16 @@ void panic(const char *fmt, ...)
- 	va_start(args, fmt);
- 	vpanic(fmt, args);
- 	va_end(args);
-+#ifdef CONFIG_WEAKEN_IGNORE_PANIC
-+	asm volatile("ret" :::);
-+#endif
- }
- EXPORT_SYMBOL(panic);
- 
-+#ifdef CONFIG_WEAKEN_IGNORE_PANIC
-+STACK_FRAME_NON_STANDARD(panic);
-+#endif
-+
- #define TAINT_FLAG(taint, _c_true, _c_false)				\
- 	[ TAINT_##taint ] = {						\
- 		.c_true = _c_true, .c_false = _c_false,			\
-@@ -1039,6 +1085,10 @@ bool oops_may_print(void)
+@@ -1039,6 +1065,10 @@ bool oops_may_print(void)
   */
  void oops_enter(void)
  {
@@ -893,3 +956,64 @@ index 9cbf932b0..e66341e1e 100644
  
  		/* Allow architectures to sanity-check the new flags */
  		if (!arch_validate_flags(newflags)) {
+diff --git a/scripts/Makefile.lib b/scripts/Makefile.lib
+index 0a4fdd8bd..dd25f0106 100644
+--- a/scripts/Makefile.lib
++++ b/scripts/Makefile.lib
+@@ -208,7 +208,7 @@ objtool-args-$(CONFIG_HAVE_STATIC_CALL_INLINE)		+= --static-call
+ objtool-args-$(CONFIG_HAVE_UACCESS_VALIDATION)		+= --uaccess
+ objtool-args-$(or $(CONFIG_GCOV_KERNEL),$(CONFIG_KCOV))	+= --no-unreachable
+ objtool-args-$(CONFIG_OBJTOOL_WERROR)			+= --werror
+-
++objtool-args-$(CONFIG_WEAKEN_IGNORE_PANIC)              += --ignpanic
+ objtool-args = $(objtool-args-y)					\
+ 	$(if $(delay-objtool), --link)					\
+ 	$(if $(part-of-module), --module)
+diff --git a/tools/objtool/builtin-check.c b/tools/objtool/builtin-check.c
+index 118c3de2f..23b9e5644 100644
+--- a/tools/objtool/builtin-check.c
++++ b/tools/objtool/builtin-check.c
+@@ -107,8 +107,9 @@ static const struct option check_options[] = {
+ 	OPT_BOOLEAN('v',	 "verbose", &opts.verbose, "verbose warnings"),
+ 	OPT_BOOLEAN(0,		 "werror", &opts.werror, "return error on warnings"),
+ 	OPT_BOOLEAN(0,		 "wide", &opts.wide, "wide output"),
++	OPT_BOOLEAN(0,		 "ignpanic", &opts.ignpanic, "exclude vpanic, panic symbol from noreturns.h"),
+ 
+-	OPT_END(),
++	OPT_END()
+ };
+ 
+ int cmd_parse_options(int argc, const char **argv, const char * const usage[])
+diff --git a/tools/objtool/check.c b/tools/objtool/check.c
+index 10b18cf9c..5d3a7dfe4 100644
+--- a/tools/objtool/check.c
++++ b/tools/objtool/check.c
+@@ -245,8 +245,15 @@ static bool __dead_end_function(struct objtool_file *file, struct symbol *func,
+ 			return true;
+ 
+ 		for (i = 0; i < ARRAY_SIZE(global_noreturns); i++)
+-			if (!strcmp(func->name, global_noreturns[i]))
++			// Reflection of CONFIG_WEAKEN_IGNORE_PANIC for objtool
++			if (!strcmp(func->name, global_noreturns[i])) {
++				if (opts.ignpanic) {
++					if (!strcmp("panic", func->name) ||
++					    !strcmp("vpanic", func->name))
++						return false;
++				}
+ 				return true;
++			}
+ 	}
+ 
+ 	if (is_weak_sym(func))
+diff --git a/tools/objtool/include/objtool/builtin.h b/tools/objtool/include/objtool/builtin.h
+index e844e9c82..09c7e7289 100644
+--- a/tools/objtool/include/objtool/builtin.h
++++ b/tools/objtool/include/objtool/builtin.h
+@@ -47,6 +47,7 @@ struct opts {
+ 	bool verbose;
+ 	bool werror;
+ 	bool wide;
++	bool ignpanic;
+ };
+ 
+ extern struct opts opts;
