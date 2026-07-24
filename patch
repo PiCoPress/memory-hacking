@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index fae409cd5..903c81d65 100644
+index fae409cd5..60d6209eb 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -1210,6 +1210,10 @@ include $(addprefix $(srctree)/, $(include-y))
@@ -7,29 +7,37 @@ index fae409cd5..903c81d65 100644
  # from the clean source tree, the GCC plugins do not exist at this point.
  
 +ifeq ($(CONFIG_WEAKEN_IGNORE_PANIC),y)
-+KCFLAGS += -Wno-error=return-type
++KBUILD_CFLAGS += -Wno-error=return-type
 +endif
 +
  # Add user supplied CPPFLAGS, AFLAGS, CFLAGS and RUSTFLAGS as the last assignments
  KBUILD_CPPFLAGS += $(KCPPFLAGS)
  KBUILD_AFLAGS   += $(KAFLAGS)
+diff --git a/arch/Kconfig.weak b/arch/Kconfig.weak
+new file mode 100644
+index 000000000..357197121
+--- /dev/null
++++ b/arch/Kconfig.weak
+@@ -0,0 +1,3 @@
++if X86
++	source "arch/x86/Kconfig.weak"
++endif
 diff --git a/arch/x86/Kconfig.weak b/arch/x86/Kconfig.weak
 new file mode 100644
-index 000000000..d90a828f9
+index 000000000..74aae0ee5
 --- /dev/null
 +++ b/arch/x86/Kconfig.weak
-@@ -0,0 +1,113 @@
-+# Weakening options for x86 processors
-+
-+config WEAKEN_TASK_CHECK
-+	bool "Check current task context"
-+	default y
+@@ -0,0 +1,84 @@
++# Weakening options for X86
++config WEAKEN_NO_TASK_CHECK
++	bool "Don't check current task context"
++	default n
 +	depends on X86
 +
 +config WEAKEN_SKIP_INST
-+	bool "Skip instuction when fault (DANGEROUS)"
++	bool "Skip instruction when fault (DANGEROUS)"
 +	default n
-+	depends on X86
++	depends on X86_64
 +
 +config WEAKEN_ALLOW_USR_ADDR
 +	bool "Allow user address on copy_from_kernel"
@@ -46,94 +54,66 @@ index 000000000..d90a828f9
 +	default n
 +	depends on X86
 +
-+config WEAKEN_STATIC_PROTECTION
-+	bool "Enable static protection"
-+	default y
++config WEAKEN_NO_STATIC_PROTECTION
++	bool "Disable static protection"
++	default n
 +	depends on X86
 +
 +config WEAKEN_PAGE_RWX
 +	bool "Make all pages RWX (DANGEROUS)"
 +	default n
++	depends on X86_64
 +	help
-+		Make all pages RWX (__RW | __NX). 
-+		This option will take too long time for re-compiling.
++		Make all pages RWX (set __RW / clear __NX). 
++		This option will take too long time for re-compiling when you change.
 +		Enabling this may cause problem for some applications.
-+	depends on X86
 +
 +config WEAKEN_PAGE_USR
 +	bool "Make all pages like user page (DANGEROUS)"
 +	default n
++	depends on X86_64
 +	help
 +		Treat all pages as the user page with __USR bit masking. 
 +		You might want to disable SMAP, SMEP, and UMIP.
-+	depends on X86
 +
-+config WEAKEN_STRICT_NMI_UACCESS
-+	bool "Strict NMI uaccess"
-+	default y
-+	depends on X86
-+
-+config WEAKEN_MIGHT_FAULT
-+	bool "Enable might_fault on usercopy"
-+	default y
-+
-+config WEAKEN_STRICT_USERCOPY
-+	bool "Check Masked user address"
-+	default y
-+
-+config WEAKEN_RESTRICT_KEXEC
-+	bool "Restrict kexec"
-+	default y
-+	help
-+		Allow only superuser to use kexec when enabled.
-+
-+config WEAKEN_IGNORE_PANIC
-+	bool "Ignore kernel panic and continue execution (DANGEROUS)"
++config WEAKEN_RELAX_NMI_UACCESS
++	bool "Relaxed NMI uaccess"
 +	default n
-+	help
-+		Ignore kernel panic, and continue execution. Technically, 
-+		it makes the functions 'vpanic' and 'panic' returnable.
-+		So, you need to set Kconfig option "OBJTOOL_WERROR" to N
-+		when building.
-+		This option will add cflags 'Wno-error=return-type' to KCFLAGS.
-+		
++	depends on X86
 +
 +config WEAKEN_IGNORE_OOPS
 +	bool "Ignore kernel oops and skip instruction (DANGEROUS)"
 +	default n
++	depends on X86_64
 +	help
 +		Ignore a kernel oops. Also skip the current instruction 
 +		and continue running. This will cause heavy lag with log spam.
 +		Therefore, it's not that meaningful option.
-+	depends on X86
 +
-+config WEAKEN_OOPS_MSG
-+	bool "Add cooked message when oops"
-+	default y
-+	help
-+		prints "Hello, you are cooked. good luck." when oops
++menu "CPU Features"
++	config WEAKEN_DISABLE_SMEP
++		bool "Disable SMEP"
++		default n
++		depends on X86
 +
-+config WEAKEN_ALWAYS_WRITABLE_PTE
-+	bool "Allow to change PTE writable"
-+	default n
++	config WEAKEN_DISABLE_SMAP
++		bool "Disable SMAP"
++		default n
++		depends on X86
 +
-+config WEAKEN_DISABLE_SMEP
-+	bool "Disable SMEP"
-+	default n
-+	depends on X86
++	config WEAKEN_DISABLE_UMIP
++		bool "Disable UMIP"
++		default n
++		depends on X86
 +
-+config WEAKEN_DISABLE_SMAP
-+	bool "Disable SMAP"
-+	default n
-+	depends on X86
-+
-+config WEAKEN_DISABLE_UMIP
-+	bool "Disable UMIP"
-+	default n
-+	depends on X86
++	config WEAKEN_DISABLE_CET
++		bool "Disable CET"
++		default n
++		depends on X86
++endmenu
 +
 diff --git a/arch/x86/include/asm/pgtable.h b/arch/x86/include/asm/pgtable.h
-index ac295ca6c..a604fef7e 100644
+index ac295ca6c..46ca0e873 100644
 --- a/arch/x86/include/asm/pgtable.h
 +++ b/arch/x86/include/asm/pgtable.h
 @@ -1024,8 +1024,13 @@ static inline unsigned long pmd_page_vaddr(pmd_t pmd)
@@ -150,8 +130,30 @@ index ac295ca6c..a604fef7e 100644
  }
  
  static inline unsigned long pages_to_mb(unsigned long npg)
+@@ -1136,13 +1141,21 @@ static inline int pgd_bad(pgd_t pgd)
+ {
+ 	unsigned long ignore_flags = _PAGE_USER;
+ 
++#ifdef CONFIG_WEAKEN_PAGE_USR
++	ignore_flags = 0;
++#endif
++
+ 	if (!pgtable_l5_enabled())
+ 		return 0;
+ 
+ 	if (IS_ENABLED(CONFIG_MITIGATION_PAGE_TABLE_ISOLATION))
+ 		ignore_flags |= _PAGE_NX;
+ 
++#ifndef CONFIG_WEAKEN_PAGE_USR
+ 	return (pgd_flags(pgd) & ~ignore_flags) != _KERNPG_TABLE;
++#else
++	return (pgd_flags(pgd) & ~ignore_flags) != (_KERNPG_TABLE | _PAGE_USER);
++#endif
+ }
+ 
+ static inline int pgd_none(pgd_t pgd)
 diff --git a/arch/x86/include/asm/pgtable_types.h b/arch/x86/include/asm/pgtable_types.h
-index 2ec250ba4..e3395be48 100644
+index 2ec250ba4..435795756 100644
 --- a/arch/x86/include/asm/pgtable_types.h
 +++ b/arch/x86/include/asm/pgtable_types.h
 @@ -202,33 +202,74 @@ enum page_cache_mode {
@@ -232,27 +234,27 @@ index 2ec250ba4..e3395be48 100644
 -#define __PAGE_KERNEL_LARGE	 (__PP|__RW|   0|___A|__NX|___D|_PSE|___G)
 -#define __PAGE_KERNEL_LARGE_EXEC (__PP|__RW|   0|___A|   0|___D|_PSE|___G)
 -#define __PAGE_KERNEL_WP	 (__PP|__RW|   0|___A|__NX|___D|   0|___G| __WP)
-+ #define _KERNPG_TABLE_NOENC	 (__PP|__RW|   0|___A|   0|___D|   0|   0)
-+ #define _KERNPG_TABLE		 (__PP|__RW|   0|___A|   0|___D|   0|   0| _ENC)
++ #define _KERNPG_TABLE_NOENC	 (__PP|__RW|_PUE|___A|   0|___D|   0|   0)
++ #define _KERNPG_TABLE		 (__PP|__RW|_PUE|___A|   0|___D|   0|   0| _ENC)
 + #define _PAGE_TABLE_NOENC	 (__PP|__RW|_USR|___A|   0|___D|   0|   0)
 + #define _PAGE_TABLE		 (__PP|__RW|_USR|___A|   0|___D|   0|   0| _ENC)
 +
-+ #define __PAGE_KERNEL_RO	 (__PP|   0|   0|___A|__NX|   0|   0|___G)
-+ #define __PAGE_KERNEL_ROX	 (__PP|   0|   0|___A|   0|   0|   0|___G)
-+ #define __PAGE_KERNEL		 (__PP|__RW|   0|___A|__NX|___D|   0|___G)
-+ #define __PAGE_KERNEL_EXEC	 (__PP|__RW|   0|___A|   0|___D|   0|___G)
-+ #define __PAGE_KERNEL_NOCACHE	 (__PP|__RW|   0|___A|__NX|___D|   0|___G| __NC)
++ #define __PAGE_KERNEL_RO	 (__PP|   0|_PUE|___A|__NX|   0|   0|___G)
++ #define __PAGE_KERNEL_ROX	 (__PP|   0|_PUE|___A|   0|   0|   0|___G)
++ #define __PAGE_KERNEL		 (__PP|__RW|_PUE|___A|__NX|___D|   0|___G)
++ #define __PAGE_KERNEL_EXEC	 (__PP|__RW|_PUE|___A|   0|___D|   0|___G)
++ #define __PAGE_KERNEL_NOCACHE	 (__PP|__RW|_PUE|___A|__NX|___D|   0|___G| __NC)
 + #define __PAGE_KERNEL_VVAR	 (__PP|   0|_USR|___A|__NX|   0|   0|___G)
-+ #define __PAGE_KERNEL_LARGE	 (__PP|__RW|   0|___A|__NX|___D|_PSE|___G)
-+ #define __PAGE_KERNEL_LARGE_EXEC (__PP|__RW|   0|___A|   0|___D|_PSE|___G)
-+ #define __PAGE_KERNEL_WP	 (__PP|__RW|   0|___A|__NX|___D|   0|___G| __WP)
++ #define __PAGE_KERNEL_LARGE	 (__PP|__RW|_PUE|___A|__NX|___D|_PSE|___G)
++ #define __PAGE_KERNEL_LARGE_EXEC (__PP|__RW|_PUE|___A|   0|___D|_PSE|___G)
++ #define __PAGE_KERNEL_WP	 (__PP|__RW|_PUE|___A|__NX|___D|   0|___G| __WP)
 +#endif
 +
  
  
  #define __PAGE_KERNEL_IO		__PAGE_KERNEL
 diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
-index a3df21d26..7529d8d33 100644
+index a3df21d26..6a35aa67d 100644
 --- a/arch/x86/kernel/cpu/common.c
 +++ b/arch/x86/kernel/cpu/common.c
 @@ -2057,9 +2057,17 @@ static void identify_cpu(struct cpuinfo_x86 *c)
@@ -273,8 +275,19 @@ index a3df21d26..7529d8d33 100644
  
  	/*
  	 * The vendor-specific functions might have changed features.
+@@ -2086,7 +2094,10 @@ static void identify_cpu(struct cpuinfo_x86 *c)
+ 
+ 	x86_init_rdrand(c);
+ 	setup_pku(c);
++
++#ifndef CONFIG_WEAKEN_DISABLE_CET
+ 	setup_cet(c);
++#endif
+ 
+ 	/*
+ 	 * Clear/Set all flags overridden by options, need do it
 diff --git a/arch/x86/kernel/dumpstack.c b/arch/x86/kernel/dumpstack.c
-index b10684ded..90c3c0d8c 100644
+index b10684ded..adb1fc3fb 100644
 --- a/arch/x86/kernel/dumpstack.c
 +++ b/arch/x86/kernel/dumpstack.c
 @@ -23,6 +23,10 @@
@@ -292,7 +305,7 @@ index b10684ded..90c3c0d8c 100644
  		return copy_from_kernel_nofault(buf, (u8 *)src, nbytes);
  
  	/* The user space code from other tasks cannot be accessed. */
-+#ifdef CONFIG_WEAKEN_TASK_CHECK
++#ifndef CONFIG_WEAKEN_NO_TASK_CHECK
  	if (regs != task_pt_regs(current))
  		return -EPERM;
 -
@@ -300,32 +313,36 @@ index b10684ded..90c3c0d8c 100644
  	/*
  	 * Even if named copy_from_user_nmi() this can be invoked from
  	 * other contexts and will not try to resolve a pagefault, which is
-@@ -404,8 +409,24 @@ void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
+@@ -404,8 +409,28 @@ void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
  	 * Before we rewind the stack, we have to tell KASAN that we're going to
  	 * reuse the task stack and that existing poisons are invalid.
  	 */
 +
 +#ifndef CONFIG_WEAKEN_IGNORE_OOPS
- 	kasan_unpoison_task_stack(current);
- 	rewind_stack_and_make_dead(signr);
++	kasan_unpoison_task_stack(current);
++	rewind_stack_and_make_dead(signr);
 +#else
 +	struct insn obj;
++	unsigned char buf[MAX_INSN_SIZE];
++
++	if (copy_from_kernel_nofault(buf, (void* )regs->ip, MAX_INSN_SIZE))
++		goto fallback;
 +
 +	// Skip the instruction, which is the kernel code.
-+	insn_init(&obj, regs->ip, MAX_INSN_SIZE, IS_ENABLED(CONFIG_X86_64));
++	insn_init(&obj, buf, MAX_INSN_SIZE, IS_ENABLED(CONFIG_X86_64));
 +	if (!insn_get_length(&obj)) regs->ip += obj.length;
 +	else
 +		goto fallback;
 +
 +	return;
 +fallback:
-+	kasan_unpoison_task_stack(current);
-+	rewind_stack_and_make_dead(signr);
+ 	kasan_unpoison_task_stack(current);
+ 	rewind_stack_and_make_dead(signr);
 +#endif
  }
  NOKPROBE_SYMBOL(oops_end);
  
-@@ -431,6 +452,10 @@ static int __die_body(const char *str, struct pt_regs *regs, long err)
+@@ -431,6 +456,10 @@ static int __die_body(const char *str, struct pt_regs *regs, long err)
  	show_regs(regs);
  	print_modules();
  
@@ -493,7 +510,7 @@ index 42115ac07..be4ab5ebf 100644
  	/*
  	 * Allow everything during early boot before 'x86_virt_bits'
 diff --git a/arch/x86/mm/pat/set_memory.c b/arch/x86/mm/pat/set_memory.c
-index d023a40a1..db78251aa 100644
+index d023a40a1..0733eec2a 100644
 --- a/arch/x86/mm/pat/set_memory.c
 +++ b/arch/x86/mm/pat/set_memory.c
 @@ -599,6 +599,8 @@ static inline void check_conflict(int warnlvl, pgprot_t prot, pgprotval_t val,
@@ -517,7 +534,7 @@ index d023a40a1..db78251aa 100644
  					  unsigned long pfn, unsigned long npg,
  					  unsigned long lpsize, int warnlvl)
  {
-+#ifdef CONFIG_WEAKEN_STATIC_PROTECTION
++#ifndef CONFIG_WEAKEN_NO_STATIC_PROTECTION
  	pgprotval_t forbidden, res;
  	unsigned long end;
  
@@ -533,16 +550,18 @@ index d023a40a1..db78251aa 100644
  }
  
  /*
-@@ -2302,29 +2311,58 @@ int clear_mce_nospec(unsigned long pfn)
+@@ -2302,29 +2311,60 @@ int clear_mce_nospec(unsigned long pfn)
  EXPORT_SYMBOL_GPL(clear_mce_nospec);
  #endif /* CONFIG_X86_64 */
  
 +#ifdef CONFIG_WEAKEN_PAGE_RWX
 +// Set RWX bit. to dangerous
-+int set_memory_rwx(unsigned long addr, int numpages)
++static int set_memory_rwx(unsigned long addr, int numpages)
 +{
-+	if (!(__supported_pte_mask & _PAGE_NX) && __supported_pte_mask & _PAGE_RW)
-+		return 0;
++	// If NX bit isn't supported, Toggle only the RW bits.
++	if (!(__supported_pte_mask & _PAGE_NX)) {
++		return change_page_attr_set(&addr, numpages, __pgprot(_PAGE_RW), 0);
++	}
 +
 +	return change_page_attr_set_clr(&addr, numpages, __pgprot(_PAGE_RW), 
 +					__pgprot(_PAGE_NX), 0, 0, NULL);
@@ -592,7 +611,7 @@ index d023a40a1..db78251aa 100644
  	pgprot_t clr = __pgprot(_PAGE_RW | _PAGE_DIRTY);
  
  	if (__supported_pte_mask & _PAGE_NX)
-@@ -2332,11 +2370,17 @@ int set_memory_rox(unsigned long addr, int numpages)
+@@ -2332,11 +2372,17 @@ int set_memory_rox(unsigned long addr, int numpages)
  
  	return change_page_attr_set_clr(&addr, numpages, __pgprot(0), clr, 0,
  					CPA_COLLAPSE, NULL);
@@ -611,7 +630,7 @@ index d023a40a1..db78251aa 100644
  
  int set_memory_np(unsigned long addr, int numpages)
 diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
-index 1023acadd..269e6c63c 100644
+index 1023acadd..4a94b7e28 100644
 --- a/arch/x86/mm/tlb.c
 +++ b/arch/x86/mm/tlb.c
 @@ -1760,8 +1760,12 @@ bool nmi_uaccess_okay(void)
@@ -620,7 +639,7 @@ index 1023acadd..269e6c63c 100644
  	 */
 +	
 +	// What if it always return true?
-+#ifdef CONFIG_WEAKEN_STRICT_NMI_UACCESS
++#ifndef CONFIG_WEAKEN_RELAX_NMI_UACCESS
  	if (loaded_mm != current_mm)
  		return false;
 +#endif
@@ -652,14 +671,14 @@ index f1dd417e5..ac4ecfacd 100644
  void check_panic_on_warn(const char *origin);
  extern void oops_enter(void);
 diff --git a/include/linux/uaccess.h b/include/linux/uaccess.h
-index eddbbb65c..c4b7656dd 100644
+index eddbbb65c..edb06baad 100644
 --- a/include/linux/uaccess.h
 +++ b/include/linux/uaccess.h
 @@ -112,7 +112,10 @@ __copy_from_user(void *to, const void __user *from, unsigned long n)
  {
  	unsigned long res;
  
-+#ifdef CONFIG_WEAKEN_MIGHT_FAULT
++#ifndef CONFIG_WEAKEN_NO_MIGHT_FAULT
  	might_fault();
 +#endif
 +
@@ -670,7 +689,7 @@ index eddbbb65c..c4b7656dd 100644
  static __always_inline __must_check unsigned long
  __copy_to_user(void __user *to, const void *from, unsigned long n)
  {
-+#ifdef CONFIG_WEAKEN_MIGHT_FAULT
++#ifndef CONFIG_WEAKEN_NO_MIGHT_FAULT
  	might_fault();
 +#endif
 +
@@ -682,7 +701,7 @@ index eddbbb65c..c4b7656dd 100644
  {
  	unsigned long res = n;
 +
-+#ifdef CONFIG_WEAKEN_MIGHT_FAULT
++#ifndef CONFIG_WEAKEN_NO_MIGHT_FAULT
  	might_fault();
 +#endif
 +
@@ -690,7 +709,7 @@ index eddbbb65c..c4b7656dd 100644
  	if (should_fail_usercopy())
  		goto fail;
 +
-+#ifdef CONFIG_WEAKEN_STRICT_USERCOPY
++#ifndef CONFIG_WEAKEN_XC_USERCOPY
  	if (can_do_masked_user_access())
  		from = mask_user_address(from);
  	else {
@@ -712,7 +731,7 @@ index eddbbb65c..c4b7656dd 100644
  static inline __must_check unsigned long
  _inline_copy_to_user(void __user *to, const void *from, unsigned long n)
  {
-+#ifdef CONFIG_WEAKEN_MIGHT_FAULT
++#ifndef CONFIG_WEAKEN_NO_MIGHT_FAULT
  	might_fault();
 +#endif
 +
@@ -732,8 +751,58 @@ index e363232b4..6ffd73807 100644
  	mark_readonly();
  
  	/*
+diff --git a/kernel/Kconfig.weak b/kernel/Kconfig.weak
+new file mode 100644
+index 000000000..af383e20e
+--- /dev/null
++++ b/kernel/Kconfig.weak
+@@ -0,0 +1,44 @@
++# Weakening options
++config WEAKEN_NO_MIGHT_FAULT
++	bool "Disable might_fault on usercopy"
++	default n
++
++config WEAKEN_XC_USERCOPY
++	bool "Don't check Masked user address"
++	default n
++
++config WEAKEN_UNRESTRICT_KEXEC
++	bool "Unrestricted kexec (DANGEROUS)"
++	default n
++	help
++		Allow anybody to use kexec when enabled.
++
++config WEAKEN_IGNORE_PANIC
++	bool "Ignore kernel panic and continue execution (DANGEROUS)"
++	default n
++	depends on !OBJTOOL_WERROR
++	help
++		Ignore kernel panic, and continue execution. Technically, 
++		it makes the functions 'vpanic' and 'panic' returnable.
++		So, you need to set Kconfig option "OBJTOOL_WERROR" to N
++		when building.
++		This option will add cflags 'Wno-error=return-type' to KCFLAGS.
++
++config WEAKEN_OOPS_MSG
++	bool "Add cooked message when oops"
++	default y
++	help
++		prints "Hello, you are cooked. good luck." when oops
++
++config WEAKEN_ALWAYS_WRITABLE_PTE
++	bool "Allow to change PTE writable"
++	default n
++
++config WEAKEN_OOPS_MSG
++	bool "Add cooked message when oops"
++	default y
++	help
++		prints "hello, you are cooked. good luck." when oops
++
++source "arch/Kconfig.weak"
++
 diff --git a/kernel/kexec.c b/kernel/kexec.c
-index 90756dc63..fb4cba0c7 100644
+index 90756dc63..be6398c18 100644
 --- a/kernel/kexec.c
 +++ b/kernel/kexec.c
 @@ -205,10 +205,11 @@ static inline int kexec_load_check(unsigned long nr_segments,
@@ -741,7 +810,7 @@ index 90756dc63..fb4cba0c7 100644
  			 KEXEC_TYPE_CRASH : KEXEC_TYPE_DEFAULT;
  	int result;
 -
-+#ifdef CONFIG_WEAKEN_RESTRICT_KEXEC
++#ifndef CONFIG_WEAKEN_UNRESTRICT_KEXEC
  	/* We only trust the superuser with rebooting the system. */
  	if (!kexec_load_permitted(image_type))
  		return -EPERM;
@@ -750,7 +819,7 @@ index 90756dc63..fb4cba0c7 100644
  	/* Permit LSMs and IMA to fail the kexec */
  	result = security_kernel_load_data(LOADING_KEXEC_IMAGE, false);
 diff --git a/kernel/panic.c b/kernel/panic.c
-index 213725b61..fb7a6bae3 100644
+index 213725b61..beb1f9878 100644
 --- a/kernel/panic.c
 +++ b/kernel/panic.c
 @@ -285,6 +285,7 @@ void __weak __noreturn nmi_panic_self_stop(struct pt_regs *regs)
@@ -782,15 +851,15 @@ index 213725b61..fb7a6bae3 100644
  }
  
  /**
-@@ -598,6 +602,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -597,6 +601,8 @@ void vpanic(const char *fmt, va_list args)
+ 	 * there is nothing to prevent an interrupt handler (that runs
  	 * after setting panic_cpu) from invoking panic() again.
  	 */
- 	local_irq_disable();
 +
 +#ifndef CONFIG_WEAKEN_IGNORE_PANIC
+ 	local_irq_disable();
  	preempt_disable_notrace();
  
- 	/* Redirect panic to target CPU if configured via panic_force_cpu=. */
 @@ -609,6 +615,7 @@ void vpanic(const char *fmt, va_list args)
  		set_cpu_online(smp_processor_id(), false);
  		panic_smp_self_stop();
@@ -828,7 +897,7 @@ index 213725b61..fb7a6bae3 100644
  	panic_other_cpus_shutdown(_crash_kexec_post_notifiers);
 -
 +#else
-+	pr_info("kernel panic but didn't stop the machine!");
++	pr_emerg("kernel panic but didn't stop the machine!");
 +#endif
  	printk_legacy_allow_panic_sync();
  
@@ -844,28 +913,24 @@ index 213725b61..fb7a6bae3 100644
  
  	console_unblank();
  
-@@ -706,7 +723,10 @@ void vpanic(const char *fmt, va_list args)
+@@ -706,6 +723,7 @@ void vpanic(const char *fmt, va_list args)
  	 * should be disabled to avoid reporting bad unlock balance when
  	 * panic() is not being callled from OOPS.
  	 */
 +#ifndef CONFIG_WEAKEN_IGNORE_PANIC
  	debug_locks_off();
-+#endif
-+
  	console_flush_on_panic(CONSOLE_FLUSH_PENDING);
  
- 	if ((panic_print & SYS_INFO_PANIC_CONSOLE_REPLAY) ||
-@@ -715,7 +735,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -715,7 +733,7 @@ void vpanic(const char *fmt, va_list args)
  
  	if (!panic_blink)
  		panic_blink = no_blink;
 -
 +	
-+#ifndef CONFIG_WEAKEN_IGNORE_PANIC
  	if (panic_timeout > 0) {
  		/*
  		 * Delay timeout seconds before rebooting the machine.
-@@ -742,6 +763,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -742,6 +760,8 @@ void vpanic(const char *fmt, va_list args)
  			reboot_mode = panic_reboot_mode;
  		emergency_restart();
  	}
@@ -874,16 +939,25 @@ index 213725b61..fb7a6bae3 100644
  #ifdef __sparc__
  	{
  		extern int stop_a_enabled;
-@@ -768,6 +791,8 @@ void vpanic(const char *fmt, va_list args)
- 	nbcon_atomic_flush_unsafe();
+@@ -756,6 +776,7 @@ void vpanic(const char *fmt, va_list args)
+ #endif
+ 	pr_emerg("---[ end Kernel panic - not syncing: %s ]---\n", buf);
  
++#ifndef CONFIG_WEAKEN_IGNORE_PANIC
+ 	/* Do not scroll important messages printed above */
+ 	suppress_printk = 1;
+ 
+@@ -766,8 +787,8 @@ void vpanic(const char *fmt, va_list args)
+ 	 */
+ 	console_flush_on_panic(CONSOLE_FLUSH_PENDING);
+ 	nbcon_atomic_flush_unsafe();
+-
  	local_irq_enable();
 +
-+#ifndef CONFIG_WEAKEN_IGNORE_PANIC
  	for (i = 0; ; i += PANIC_TIMER_STEP) {
  		touch_softlockup_watchdog();
  		if (i >= i_next) {
-@@ -776,6 +801,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -776,6 +797,7 @@ void vpanic(const char *fmt, va_list args)
  		}
  		mdelay(PANIC_TIMER_STEP);
  	}
@@ -891,7 +965,7 @@ index 213725b61..fb7a6bae3 100644
  }
  EXPORT_SYMBOL(vpanic);
  
-@@ -1039,6 +1065,10 @@ bool oops_may_print(void)
+@@ -1039,6 +1061,10 @@ bool oops_may_print(void)
   */
  void oops_enter(void)
  {
@@ -903,7 +977,7 @@ index 213725b61..fb7a6bae3 100644
  	tracing_off();
  	/* can't trust the integrity of the kernel anymore: */
 diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
-index 1244dcac2..94321d156 100644
+index 1244dcac2..7244d69c7 100644
 --- a/lib/Kconfig.debug
 +++ b/lib/Kconfig.debug
 @@ -3642,4 +3642,8 @@ config RUST_INLINE_HELPERS
@@ -911,12 +985,12 @@ index 1244dcac2..94321d156 100644
  endmenu # "Rust"
  
 +menu "Weakening options"
-+	source "arch/x86/Kconfig.weak"
++	source "kernel/Kconfig.weak"
 +endmenu
 +
  endmenu # Kernel hacking
 diff --git a/mm/mprotect.c b/mm/mprotect.c
-index 9cbf932b0..e66341e1e 100644
+index 9cbf932b0..9129f6dc1 100644
 --- a/mm/mprotect.c
 +++ b/mm/mprotect.c
 @@ -40,6 +40,11 @@
@@ -931,16 +1005,15 @@ index 9cbf932b0..e66341e1e 100644
  	if (WARN_ON_ONCE(!(vma->vm_flags & VM_WRITE)))
  		return false;
  
-@@ -54,7 +59,7 @@ static bool maybe_change_pte_writable(struct vm_area_struct *vma, pte_t pte)
- 	/* Do we need write faults for uffd-wp tracking? */
- 	if (userfaultfd_pte_wp(vma, pte))
+@@ -56,6 +61,7 @@ static bool maybe_change_pte_writable(struct vm_area_struct *vma, pte_t pte)
  		return false;
--
-+#endif
+ 
  	return true;
++#endif
  }
  
-@@ -933,6 +938,7 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
+ static bool can_change_private_pte_writable(struct vm_area_struct *vma,
+@@ -933,6 +939,7 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
  		newflags |= (vma->vm_flags & ~mask_off_old_flags);
  		new_vma_flags = legacy_to_vma_flags(newflags);
  
@@ -948,7 +1021,7 @@ index 9cbf932b0..e66341e1e 100644
  		/* newflags >> 4 shift VM_MAY% in place of VM_% */
  		if ((newflags & ~(newflags >> 4)) & VM_ACCESS_FLAGS) {
  			error = -EACCES;
-@@ -943,6 +949,7 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
+@@ -943,6 +950,7 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
  			error = -EACCES;
  			break;
  		}
@@ -970,20 +1043,17 @@ index 0a4fdd8bd..dd25f0106 100644
  	$(if $(delay-objtool), --link)					\
  	$(if $(part-of-module), --module)
 diff --git a/tools/objtool/builtin-check.c b/tools/objtool/builtin-check.c
-index 118c3de2f..23b9e5644 100644
+index 118c3de2f..9a0d8d269 100644
 --- a/tools/objtool/builtin-check.c
 +++ b/tools/objtool/builtin-check.c
-@@ -107,8 +107,9 @@ static const struct option check_options[] = {
+@@ -107,6 +107,7 @@ static const struct option check_options[] = {
  	OPT_BOOLEAN('v',	 "verbose", &opts.verbose, "verbose warnings"),
  	OPT_BOOLEAN(0,		 "werror", &opts.werror, "return error on warnings"),
  	OPT_BOOLEAN(0,		 "wide", &opts.wide, "wide output"),
 +	OPT_BOOLEAN(0,		 "ignpanic", &opts.ignpanic, "exclude vpanic, panic symbol from noreturns.h"),
  
--	OPT_END(),
-+	OPT_END()
+ 	OPT_END(),
  };
- 
- int cmd_parse_options(int argc, const char **argv, const char * const usage[])
 diff --git a/tools/objtool/check.c b/tools/objtool/check.c
 index 10b18cf9c..5d3a7dfe4 100644
 --- a/tools/objtool/check.c
