@@ -24,10 +24,10 @@ index 000000000..357197121
 +endif
 diff --git a/arch/x86/Kconfig.weak b/arch/x86/Kconfig.weak
 new file mode 100644
-index 000000000..a43bdfffc
+index 000000000..1f2c698c1
 --- /dev/null
 +++ b/arch/x86/Kconfig.weak
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,96 @@
 +# Weakening options for X86
 +config WEAKEN_NO_TASK_CHECK
 +	bool "Don't check current task context"
@@ -79,6 +79,7 @@ index 000000000..a43bdfffc
 +	bool "Make all pages like user page (DANGEROUS)"
 +	default n
 +	depends on X86_64
++	depends on !MITIGATON_PAGE_TABLE_ISOLATION
 +	help
 +		Treat all pages as the user page with __USR bit masking. 
 +		You might want to disable SMAP, SMEP.
@@ -124,14 +125,14 @@ index 000000000..a43bdfffc
 +endmenu
 +
 diff --git a/arch/x86/include/asm/insn.h b/arch/x86/include/asm/insn.h
-index 846d21c1a..21b5b4d70 100644
+index 846d21c1a..30673307b 100644
 --- a/arch/x86/include/asm/insn.h
 +++ b/arch/x86/include/asm/insn.h
-@@ -341,4 +341,35 @@ static inline int insn_masking_exception(struct insn *insn)
+@@ -341,4 +341,60 @@ static inline int insn_masking_exception(struct insn *insn)
  		 X86_MODRM_REG(insn->modrm.bytes[0]) == 2);
  }
  
-+#ifdef CONFIG_WEAKEN_SKIP_INST
++#if defined(CONFIG_WEAKEN_SKIP_INST) || defined(CONFIG_WEAKEN_IGNORE_OOPS)
 +
 +/*
 + * Instruction skiping function for convenience.
@@ -139,6 +140,31 @@ index 846d21c1a..21b5b4d70 100644
 + */
 +static inline int insn_skip_instruction(unsigned long *ip_ptr, 
 +		long unsigned int (*copier)(void *, const void *, long unsigned int), 
++		int signr, int is_64bit)
++{
++	struct insn obj;
++	unsigned char inst_buf[MAX_INSN_SIZE] = "";
++	int code = copier(inst_buf, (void *)*ip_ptr, MAX_INSN_SIZE);
++	/* This will be a result of copy_from_user or copy_from_kernel_nofault etc. */
++
++	if (code)
++		return code;
++
++	insn_init(&obj, inst_buf, MAX_INSN_SIZE, is_64bit);
++	if (!(code = insn_get_length(&obj))) *ip_ptr += obj.length;
++	else {
++		// Forward one byte when signr is SIGILL (insane decision)
++		if (signr == 0x04 /* SIGILL */)
++			++ *ip_ptr;
++
++		else return code;
++	}
++	return 0;
++}
++
++/* li: long int */
++static inline int insn_skip_instruction_li(unsigned long *ip_ptr, 
++		long int (*copier)(void *, const void *, long unsigned int), 
 +		int signr, int is_64bit)
 +{
 +	struct insn obj;
@@ -338,7 +364,7 @@ index a3df21d26..6a35aa67d 100644
  	/*
  	 * Clear/Set all flags overridden by options, need do it
 diff --git a/arch/x86/kernel/dumpstack.c b/arch/x86/kernel/dumpstack.c
-index b10684ded..07ebee2e5 100644
+index b10684ded..7f101ccd0 100644
 --- a/arch/x86/kernel/dumpstack.c
 +++ b/arch/x86/kernel/dumpstack.c
 @@ -23,6 +23,10 @@
@@ -374,8 +400,8 @@ index b10684ded..07ebee2e5 100644
  	rewind_stack_and_make_dead(signr);
 +#else
 +	// Skip the instruction, which is the kernel code.
-+	if (!insn_skip_instruction(&regs->ip, copy_from_kernel_nofault, 0,
-+				IS_ENABLED(CONFIG_X86_64)))
++	if (!insn_skip_instruction_li(&regs->ip, copy_from_kernel_nofault, 
++				0, IS_ENABLED(CONFIG_X86_64)))
 +		return;
 +
 +	kasan_unpoison_task_stack(current);
@@ -396,7 +422,7 @@ index b10684ded..07ebee2e5 100644
  			current->thread.trap_nr, SIGSEGV) == NOTIFY_STOP)
  		return 1;
 diff --git a/arch/x86/kernel/traps.c b/arch/x86/kernel/traps.c
-index 30aa83699..86e385b65 100644
+index 30aa83699..0df670c22 100644
 --- a/arch/x86/kernel/traps.c
 +++ b/arch/x86/kernel/traps.c
 @@ -72,6 +72,10 @@
@@ -410,29 +436,28 @@ index 30aa83699..86e385b65 100644
  #ifdef CONFIG_X86_64
  #include <asm/x86_init.h>
  #else
-@@ -341,11 +345,19 @@ do_trap(int trapnr, int signr, char *str, struct pt_regs *regs,
+@@ -341,11 +345,18 @@ do_trap(int trapnr, int signr, char *str, struct pt_regs *regs,
  		return;
  
  	show_signal(tsk, signr, "trap ", str, regs, error_code);
 -
 +	// What if kernel doesn't occur a fault?
-+	
++#ifdef CONFIG_WEAKEN_SKIP_INST
++	if (!insn_skip_instruction(&regs->ip, copy_from_user, signr,
++				user_64bit_mode(regs)))
++		return;
++#endif
  	if (!sicode)
  		force_sig(signr);
 -	else
 +	else {
-+#ifdef CONFIG_WEAKEN_SKIP_INST
-+		if (!insn_skip_instruction(&regs->ip, copy_from_user, signr,
-+					user_64bit_mode(regs)))
-+			return;
-+#endif
  		force_sig_fault(signr, sicode, addr);
 +	}
 +	
  }
  NOKPROBE_SYMBOL(do_trap);
  
-@@ -905,10 +917,18 @@ static bool gp_try_fixup_and_notify(struct pt_regs *regs, int trapnr,
+@@ -905,10 +916,18 @@ static bool gp_try_fixup_and_notify(struct pt_regs *regs, int trapnr,
  static void gp_user_force_sig_segv(struct pt_regs *regs, int trapnr,
  				   unsigned long error_code, const char *str)
  {
