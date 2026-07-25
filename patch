@@ -24,10 +24,10 @@ index 000000000..357197121
 +endif
 diff --git a/arch/x86/Kconfig.weak b/arch/x86/Kconfig.weak
 new file mode 100644
-index 000000000..74aae0ee5
+index 000000000..a43bdfffc
 --- /dev/null
 +++ b/arch/x86/Kconfig.weak
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,95 @@
 +# Weakening options for X86
 +config WEAKEN_NO_TASK_CHECK
 +	bool "Don't check current task context"
@@ -38,6 +38,10 @@ index 000000000..74aae0ee5
 +	bool "Skip instruction when fault (DANGEROUS)"
 +	default n
 +	depends on X86_64
++	help
++		Skip an instruction when encountered a fault by increasing RIP.
++		It uses 'insn decoder' to calculate an instruction length.
++		If fault signal is SIGILL, it will skip 1 byte.
 +
 +config WEAKEN_ALLOW_USR_ADDR
 +	bool "Allow user address on copy_from_kernel"
@@ -58,11 +62,14 @@ index 000000000..74aae0ee5
 +	bool "Disable static protection"
 +	default n
 +	depends on X86
++	help
++		Make static_protection function no-op.
 +
 +config WEAKEN_PAGE_RWX
 +	bool "Make all pages RWX (DANGEROUS)"
 +	default n
 +	depends on X86_64
++	select WEAKEN_NO_STATIC_PROTECTION
 +	help
 +		Make all pages RWX (set __RW / clear __NX). 
 +		This option will take too long time for re-compiling when you change.
@@ -74,7 +81,7 @@ index 000000000..74aae0ee5
 +	depends on X86_64
 +	help
 +		Treat all pages as the user page with __USR bit masking. 
-+		You might want to disable SMAP, SMEP, and UMIP.
++		You might want to disable SMAP, SMEP.
 +
 +config WEAKEN_RELAX_NMI_UACCESS
 +	bool "Relaxed NMI uaccess"
@@ -95,11 +102,15 @@ index 000000000..74aae0ee5
 +		bool "Disable SMEP"
 +		default n
 +		depends on X86
++		help
++			Alternative is 'nosmep' boot option.
 +
 +	config WEAKEN_DISABLE_SMAP
 +		bool "Disable SMAP"
 +		default n
 +		depends on X86
++		help
++			Alternative is 'nosmap' boot option.
 +
 +	config WEAKEN_DISABLE_UMIP
 +		bool "Disable UMIP"
@@ -112,6 +123,46 @@ index 000000000..74aae0ee5
 +		depends on X86
 +endmenu
 +
+diff --git a/arch/x86/include/asm/insn.h b/arch/x86/include/asm/insn.h
+index 846d21c1a..21b5b4d70 100644
+--- a/arch/x86/include/asm/insn.h
++++ b/arch/x86/include/asm/insn.h
+@@ -341,4 +341,35 @@ static inline int insn_masking_exception(struct insn *insn)
+ 		 X86_MODRM_REG(insn->modrm.bytes[0]) == 2);
+ }
+ 
++#ifdef CONFIG_WEAKEN_SKIP_INST
++
++/*
++ * Instruction skiping function for convenience.
++ * If success, return 0. Or returns error code when failed
++ */
++static inline int insn_skip_instruction(unsigned long *ip_ptr, 
++		long unsigned int (*copier)(void *, const void *, long unsigned int), 
++		int signr, int is_64bit)
++{
++	struct insn obj;
++	unsigned char inst_buf[MAX_INSN_SIZE] = "";
++	int code = copier(inst_buf, (void *)*ip_ptr, MAX_INSN_SIZE);
++	/* This will be a result of copy_from_user or copy_from_kernel_nofault etc. */
++
++	if (code)
++		return code;
++
++	insn_init(&obj, inst_buf, MAX_INSN_SIZE, is_64bit);
++	if (!(code = insn_get_length(&obj))) *ip_ptr += obj.length;
++	else {
++		// Forward one byte when signr is SIGILL (insane decision)
++		if (signr == 0x04 /* SIGILL */)
++			++ *ip_ptr;
++
++		else return code;
++	}
++	return 0;
++}
++#endif /* CONFIG_WEAKEN_SKIP_INST */
++
+ #endif /* _ASM_X86_INSN_H */
 diff --git a/arch/x86/include/asm/pgtable.h b/arch/x86/include/asm/pgtable.h
 index ac295ca6c..46ca0e873 100644
 --- a/arch/x86/include/asm/pgtable.h
@@ -287,7 +338,7 @@ index a3df21d26..6a35aa67d 100644
  	/*
  	 * Clear/Set all flags overridden by options, need do it
 diff --git a/arch/x86/kernel/dumpstack.c b/arch/x86/kernel/dumpstack.c
-index b10684ded..adb1fc3fb 100644
+index b10684ded..07ebee2e5 100644
 --- a/arch/x86/kernel/dumpstack.c
 +++ b/arch/x86/kernel/dumpstack.c
 @@ -23,6 +23,10 @@
@@ -313,36 +364,27 @@ index b10684ded..adb1fc3fb 100644
  	/*
  	 * Even if named copy_from_user_nmi() this can be invoked from
  	 * other contexts and will not try to resolve a pagefault, which is
-@@ -404,8 +409,28 @@ void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
+@@ -404,8 +409,19 @@ void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
  	 * Before we rewind the stack, we have to tell KASAN that we're going to
  	 * reuse the task stack and that existing poisons are invalid.
  	 */
 +
 +#ifndef CONFIG_WEAKEN_IGNORE_OOPS
-+	kasan_unpoison_task_stack(current);
-+	rewind_stack_and_make_dead(signr);
-+#else
-+	struct insn obj;
-+	unsigned char buf[MAX_INSN_SIZE];
-+
-+	if (copy_from_kernel_nofault(buf, (void* )regs->ip, MAX_INSN_SIZE))
-+		goto fallback;
-+
-+	// Skip the instruction, which is the kernel code.
-+	insn_init(&obj, buf, MAX_INSN_SIZE, IS_ENABLED(CONFIG_X86_64));
-+	if (!insn_get_length(&obj)) regs->ip += obj.length;
-+	else
-+		goto fallback;
-+
-+	return;
-+fallback:
  	kasan_unpoison_task_stack(current);
  	rewind_stack_and_make_dead(signr);
++#else
++	// Skip the instruction, which is the kernel code.
++	if (!insn_skip_instruction(&regs->ip, copy_from_kernel_nofault, 0,
++				IS_ENABLED(CONFIG_X86_64)))
++		return;
++
++	kasan_unpoison_task_stack(current);
++	rewind_stack_and_make_dead(signr);
 +#endif
  }
  NOKPROBE_SYMBOL(oops_end);
  
-@@ -431,6 +456,10 @@ static int __die_body(const char *str, struct pt_regs *regs, long err)
+@@ -431,6 +447,10 @@ static int __die_body(const char *str, struct pt_regs *regs, long err)
  	show_regs(regs);
  	print_modules();
  
@@ -354,7 +396,7 @@ index b10684ded..adb1fc3fb 100644
  			current->thread.trap_nr, SIGSEGV) == NOTIFY_STOP)
  		return 1;
 diff --git a/arch/x86/kernel/traps.c b/arch/x86/kernel/traps.c
-index 30aa83699..07fdf8e75 100644
+index 30aa83699..86e385b65 100644
 --- a/arch/x86/kernel/traps.c
 +++ b/arch/x86/kernel/traps.c
 @@ -72,6 +72,10 @@
@@ -368,7 +410,7 @@ index 30aa83699..07fdf8e75 100644
  #ifdef CONFIG_X86_64
  #include <asm/x86_init.h>
  #else
-@@ -341,11 +345,31 @@ do_trap(int trapnr, int signr, char *str, struct pt_regs *regs,
+@@ -341,11 +345,19 @@ do_trap(int trapnr, int signr, char *str, struct pt_regs *regs,
  		return;
  
  	show_signal(tsk, signr, "trap ", str, regs, error_code);
@@ -380,21 +422,9 @@ index 30aa83699..07fdf8e75 100644
 -	else
 +	else {
 +#ifdef CONFIG_WEAKEN_SKIP_INST
-+		struct insn obj;
-+		unsigned char inst_buf[MAX_INSN_SIZE] = "";
-+		if (copy_from_user(inst_buf, (void __user *)regs->ip, MAX_INSN_SIZE)) 
-+			goto fallback;
-+
-+		insn_init(&obj, inst_buf, MAX_INSN_SIZE, user_64bit_mode(regs));
-+		if (!insn_get_length(&obj)) regs->ip += obj.length;
-+		else {
-+			// Forward one byte when signr is SIGILL (insane decision)
-+			if (signr == SIGILL)
-+				regs->ip += 1;
-+			else goto fallback;
-+		}
-+		return;
-+fallback:	
++		if (!insn_skip_instruction(&regs->ip, copy_from_user, signr,
++					user_64bit_mode(regs)))
++			return;
 +#endif
  		force_sig_fault(signr, sicode, addr);
 +	}
@@ -402,7 +432,7 @@ index 30aa83699..07fdf8e75 100644
  }
  NOKPROBE_SYMBOL(do_trap);
  
-@@ -905,10 +929,28 @@ static bool gp_try_fixup_and_notify(struct pt_regs *regs, int trapnr,
+@@ -905,10 +917,18 @@ static bool gp_try_fixup_and_notify(struct pt_regs *regs, int trapnr,
  static void gp_user_force_sig_segv(struct pt_regs *regs, int trapnr,
  				   unsigned long error_code, const char *str)
  {
@@ -411,21 +441,11 @@ index 30aa83699..07fdf8e75 100644
  	current->thread.trap_nr = trapnr;
  	show_signal(current, SIGSEGV, "", str, regs, error_code);
 -	force_sig(SIGSEGV);
-+	/*
-+	What if it just skip an instruction that caused GP?
-+	*/
++	/* What if it just skip an instruction that caused GP? */
 +#ifdef CONFIG_WEAKEN_SKIP_INST
-+		struct insn obj;
-+		unsigned char inst_buf[MAX_INSN_SIZE] = "";
-+		if (copy_from_user(inst_buf, (void __user *)regs->ip, MAX_INSN_SIZE))
-+			goto fallback;
-+
-+		insn_init(&obj, inst_buf, MAX_INSN_SIZE, user_64bit_mode(regs));
-+		if (!insn_get_length(&obj)) regs->ip += obj.length;
-+		else
-+			goto fallback;
-+		return;
-+fallback:	
++		if (!insn_skip_instruction(&regs->ip, copy_from_user, 0,
++					user_64bit_mode(regs)))
++			return;
 +#endif
 +		force_sig(SIGSEGV); // Can I do anything at this point?
 +
@@ -433,7 +453,7 @@ index 30aa83699..07fdf8e75 100644
  
  DEFINE_IDTENTRY_ERRORCODE(exc_general_protection)
 diff --git a/arch/x86/mm/fault.c b/arch/x86/mm/fault.c
-index 45b99c3b1..3dcd8c4f5 100644
+index 45b99c3b1..767eaabe7 100644
 --- a/arch/x86/mm/fault.c
 +++ b/arch/x86/mm/fault.c
 @@ -37,6 +37,10 @@
@@ -447,28 +467,20 @@ index 45b99c3b1..3dcd8c4f5 100644
  #define CREATE_TRACE_POINTS
  #include <trace/events/exceptions.h>
  
-@@ -828,8 +832,26 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
+@@ -828,8 +832,18 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
  
  	if (si_code == SEGV_PKUERR)
  		force_sig_pkuerr((void __user *)address, pkey);
 -	else
 +	else {
 +#ifdef CONFIG_WEAKEN_SKIP_INST
-+		// Don't send the signal segv, just advance RIP past the current instruction
-+		// However RIP has userspace address. So it should use copy_from_user
-+		struct insn obj;
-+		unsigned char inst_buf[MAX_INSN_SIZE] = "";
-+		if (copy_from_user(inst_buf, (void __user *)regs->ip, MAX_INSN_SIZE)) 
-+			goto fallback;
-+
-+		insn_init(&obj, inst_buf, MAX_INSN_SIZE, user_64bit_mode(regs));
-+
-+		if (!insn_get_length(&obj)) regs->ip += obj.length;
-+		else 
-+			goto fallback;
-+
-+		return;
-+fallback:	
++		/*
++		 * Don't send the signal segv, just advance RIP past the current instruction.
++		 * However RIP has userspace address. So it should use copy_from_user.
++		*/
++		if (!insn_skip_instruction(&regs->ip, copy_from_user, 0, 
++					user_64bit_mode(regs)))
++			return;
 +#endif
  		force_sig_fault(SIGSEGV, si_code, (void __user *)address);
 +	}
@@ -630,21 +642,31 @@ index d023a40a1..0733eec2a 100644
  
  int set_memory_np(unsigned long addr, int numpages)
 diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
-index 1023acadd..4a94b7e28 100644
+index 1023acadd..1b0613d7b 100644
 --- a/arch/x86/mm/tlb.c
 +++ b/arch/x86/mm/tlb.c
-@@ -1760,8 +1760,12 @@ bool nmi_uaccess_okay(void)
- 	 * condition below, and we rely on the fact that switch_mm_irqs_off()
- 	 * sets loaded_mm to LOADED_MM_SWITCHING before writing to CR3.
- 	 */
+@@ -1746,10 +1746,11 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
+ bool nmi_uaccess_okay(void)
+ {
+ 	struct mm_struct *loaded_mm = this_cpu_read(cpu_tlbstate.loaded_mm);
+-	struct mm_struct *current_mm = current->mm;
+-
+ 	VM_WARN_ON_ONCE(!loaded_mm);
 +	
-+	// What if it always return true?
 +#ifndef CONFIG_WEAKEN_RELAX_NMI_UACCESS
- 	if (loaded_mm != current_mm)
+ 
++	struct mm_struct *current_mm = current->mm;
+ 	/*
+ 	 * The condition we want to check is
+ 	 * current_mm->pgd == __va(read_cr3_pa()).  This may be slow, though,
+@@ -1764,7 +1765,7 @@ bool nmi_uaccess_okay(void)
  		return false;
-+#endif
  
  	VM_WARN_ON_ONCE(__pa(current_mm->pgd) != read_cr3_pa());
+-
++#endif
+ 	return true;
+ }
  
 diff --git a/include/linux/panic.h b/include/linux/panic.h
 index f1dd417e5..ac4ecfacd 100644
@@ -753,10 +775,10 @@ index e363232b4..6ffd73807 100644
  	/*
 diff --git a/kernel/Kconfig.weak b/kernel/Kconfig.weak
 new file mode 100644
-index 000000000..af383e20e
+index 000000000..11462f8c5
 --- /dev/null
 +++ b/kernel/Kconfig.weak
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,39 @@
 +# Weakening options
 +config WEAKEN_NO_MIGHT_FAULT
 +	bool "Disable might_fault on usercopy"
@@ -769,6 +791,7 @@ index 000000000..af383e20e
 +config WEAKEN_UNRESTRICT_KEXEC
 +	bool "Unrestricted kexec (DANGEROUS)"
 +	default n
++	depends on KEXEC
 +	help
 +		Allow anybody to use kexec when enabled.
 +
@@ -782,12 +805,6 @@ index 000000000..af383e20e
 +		So, you need to set Kconfig option "OBJTOOL_WERROR" to N
 +		when building.
 +		This option will add cflags 'Wno-error=return-type' to KCFLAGS.
-+
-+config WEAKEN_OOPS_MSG
-+	bool "Add cooked message when oops"
-+	default y
-+	help
-+		prints "Hello, you are cooked. good luck." when oops
 +
 +config WEAKEN_ALWAYS_WRITABLE_PTE
 +	bool "Allow to change PTE writable"
@@ -818,11 +835,43 @@ index 90756dc63..be6398c18 100644
  
  	/* Permit LSMs and IMA to fail the kexec */
  	result = security_kernel_load_data(LOADING_KEXEC_IMAGE, false);
+diff --git a/kernel/kexec_core.c b/kernel/kexec_core.c
+index dc770b9a6..aca1e2fd4 100644
+--- a/kernel/kexec_core.c
++++ b/kernel/kexec_core.c
+@@ -1109,12 +1109,14 @@ bool kexec_load_permitted(int kexec_image_type)
+ {
+ 	struct kexec_load_limit *limit;
+ 
++#ifndef CONFIG_WEAKEN_UNRESTRICT_KEXEC
+ 	/*
+ 	 * Only the superuser can use the kexec syscall and if it has not
+ 	 * been disabled.
+ 	 */
+ 	if (!capable(CAP_SYS_BOOT) || kexec_load_disabled)
+ 		return false;
++#endif
+ 
+ 	/* Check limit counter and decrease it.*/
+ 	limit = (kexec_image_type == KEXEC_TYPE_CRASH) ?
 diff --git a/kernel/panic.c b/kernel/panic.c
-index 213725b61..beb1f9878 100644
+index 213725b61..b8669f353 100644
 --- a/kernel/panic.c
 +++ b/kernel/panic.c
-@@ -285,6 +285,7 @@ void __weak __noreturn nmi_panic_self_stop(struct pt_regs *regs)
+@@ -250,10 +250,12 @@ static __init int kernel_panic_sysfs_init(void)
+ late_initcall(kernel_panic_sysfs_init);
+ #endif
+ 
++#ifndef CONFIG_WEAKEN_IGNORE_PANIC
+ static long no_blink(int state)
+ {
+ 	return 0;
+ }
++#endif
+ 
+ /* Returns how long it waited in ms */
+ long (*panic_blink)(int state);
+@@ -285,6 +287,7 @@ void __weak __noreturn nmi_panic_self_stop(struct pt_regs *regs)
   */
  void __weak crash_smp_send_stop(void)
  {
@@ -830,7 +879,7 @@ index 213725b61..beb1f9878 100644
  	static int cpus_stopped;
  
  	/*
-@@ -301,6 +302,7 @@ void __weak crash_smp_send_stop(void)
+@@ -301,6 +304,7 @@ void __weak crash_smp_send_stop(void)
  	 */
  	smp_send_stop();
  	cpus_stopped = 1;
@@ -838,20 +887,65 @@ index 213725b61..beb1f9878 100644
  }
  
  atomic_t panic_cpu = ATOMIC_INIT(PANIC_CPU_INVALID);
-@@ -561,10 +563,12 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
- 	 * bits in addition to stopping other CPUs, hence we rely on
- 	 * crash_smp_send_stop() for that.
- 	 */
-+#ifndef CONFIG_WEAKEN_IGNORE_PANIC
- 	if (!crash_kexec)
- 		smp_send_stop();
- 	else
- 		crash_smp_send_stop();
-+#endif	
+@@ -362,6 +366,7 @@ int __weak panic_smp_redirect_cpu(int target_cpu, void *msg)
+ 	return smp_call_function_single_async(target_cpu, &panic_csd);
  }
  
++ #ifndef CONFIG_WEAKEN_IGNORE_PANIC
  /**
-@@ -597,6 +601,8 @@ void vpanic(const char *fmt, va_list args)
+  * panic_try_force_cpu - Redirect panic to a specific CPU for crash kernel
+  * @fmt: panic message format string
+@@ -441,12 +446,15 @@ static bool panic_try_force_cpu(const char *fmt, va_list args)
+ 	/* IPI/NMI sent, this CPU should stop */
+ 	return true;
+ }
++ #endif /* CONFIG_WEAKEN_IGNORE_PANIC */
+ #else
++ #ifndef CONFIG_WEAKEN_IGNORE_PANIC
+ __printf(1, 0)
+ static inline bool panic_try_force_cpu(const char *fmt, va_list args)
+ {
+ 	return false;
+ }
++ #endif /* CONFIG_WEAKEN_IGNORE_PANIC */
+ #endif /* CONFIG_SMP && CONFIG_CRASH_DUMP */
+ 
+ bool panic_try_start(void)
+@@ -530,6 +538,8 @@ void check_panic_on_warn(const char *origin)
+ 		      origin, limit);
+ }
+ 
++#ifndef CONFIG_WEAKEN_IGNORE_PANIC
++
+ static void panic_trigger_all_cpu_backtrace(void)
+ {
+ 	/* Temporary allow non-panic CPUs to write their backtraces. */
+@@ -566,6 +576,7 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
+ 	else
+ 		crash_smp_send_stop();
+ }
++#endif	
+ 
+ /**
+  * vpanic - halt the system
+@@ -577,10 +588,14 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
+ void vpanic(const char *fmt, va_list args)
+ {
+ 	static char buf[PANIC_MSG_BUFSZ];
+-	long i, i_next = 0, len;
+-	int state = 0;
++	long len;
+ 	bool _crash_kexec_post_notifiers = crash_kexec_post_notifiers;
+ 
++#ifndef CONFIG_WEAKEN_IGNORE_PANIC
++	long i, i_next = 0;
++	int state = 0;
++#endif
++
+ 	if (panic_on_warn) {
+ 		/*
+ 		 * This thread may hit another WARN() in the panic path.
+@@ -597,6 +612,8 @@ void vpanic(const char *fmt, va_list args)
  	 * there is nothing to prevent an interrupt handler (that runs
  	 * after setting panic_cpu) from invoking panic() again.
  	 */
@@ -860,7 +954,7 @@ index 213725b61..beb1f9878 100644
  	local_irq_disable();
  	preempt_disable_notrace();
  
-@@ -609,6 +615,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -609,6 +626,7 @@ void vpanic(const char *fmt, va_list args)
  		set_cpu_online(smp_processor_id(), false);
  		panic_smp_self_stop();
  	}
@@ -868,7 +962,7 @@ index 213725b61..beb1f9878 100644
  	/*
  	 * It's possible to come here directly from a panic-assertion and
  	 * not have preempt disabled. Some functions called from here want
-@@ -629,9 +636,14 @@ void vpanic(const char *fmt, va_list args)
+@@ -629,9 +647,14 @@ void vpanic(const char *fmt, va_list args)
  		/* go ahead */
  	} else if (panic_on_other_cpu())
  		panic_smp_self_stop();
@@ -883,7 +977,7 @@ index 213725b61..beb1f9878 100644
  	len = vscnprintf(buf, sizeof(buf), fmt, args);
  
  	if (len && buf[len - 1] == '\n')
-@@ -657,6 +669,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -657,6 +680,7 @@ void vpanic(const char *fmt, va_list args)
  	 * the other CPUs or else we won't be able to debug processes left
  	 * running on them.
  	 */
@@ -891,7 +985,7 @@ index 213725b61..beb1f9878 100644
  	kgdb_panic(buf);
  
  	/*
-@@ -671,7 +684,9 @@ void vpanic(const char *fmt, va_list args)
+@@ -671,7 +695,9 @@ void vpanic(const char *fmt, va_list args)
  		__crash_kexec(NULL);
  
  	panic_other_cpus_shutdown(_crash_kexec_post_notifiers);
@@ -902,18 +996,7 @@ index 213725b61..beb1f9878 100644
  	printk_legacy_allow_panic_sync();
  
  	/*
-@@ -693,8 +708,10 @@ void vpanic(const char *fmt, va_list args)
- 	 *
- 	 * Bypass the panic_cpu check and call __crash_kexec directly.
- 	 */
-+#ifndef CONFIG_WEAKEN_IGNORE_PANIC
- 	if (_crash_kexec_post_notifiers)
- 		__crash_kexec(NULL);
-+#endif
- 
- 	console_unblank();
- 
-@@ -706,6 +723,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -706,6 +732,7 @@ void vpanic(const char *fmt, va_list args)
  	 * should be disabled to avoid reporting bad unlock balance when
  	 * panic() is not being callled from OOPS.
  	 */
@@ -921,7 +1004,7 @@ index 213725b61..beb1f9878 100644
  	debug_locks_off();
  	console_flush_on_panic(CONSOLE_FLUSH_PENDING);
  
-@@ -715,7 +733,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -715,7 +742,7 @@ void vpanic(const char *fmt, va_list args)
  
  	if (!panic_blink)
  		panic_blink = no_blink;
@@ -930,7 +1013,7 @@ index 213725b61..beb1f9878 100644
  	if (panic_timeout > 0) {
  		/*
  		 * Delay timeout seconds before rebooting the machine.
-@@ -742,6 +760,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -742,6 +769,8 @@ void vpanic(const char *fmt, va_list args)
  			reboot_mode = panic_reboot_mode;
  		emergency_restart();
  	}
@@ -939,7 +1022,7 @@ index 213725b61..beb1f9878 100644
  #ifdef __sparc__
  	{
  		extern int stop_a_enabled;
-@@ -756,6 +776,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -756,6 +785,7 @@ void vpanic(const char *fmt, va_list args)
  #endif
  	pr_emerg("---[ end Kernel panic - not syncing: %s ]---\n", buf);
  
@@ -947,7 +1030,7 @@ index 213725b61..beb1f9878 100644
  	/* Do not scroll important messages printed above */
  	suppress_printk = 1;
  
-@@ -766,8 +787,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -766,8 +796,8 @@ void vpanic(const char *fmt, va_list args)
  	 */
  	console_flush_on_panic(CONSOLE_FLUSH_PENDING);
  	nbcon_atomic_flush_unsafe();
@@ -957,7 +1040,7 @@ index 213725b61..beb1f9878 100644
  	for (i = 0; ; i += PANIC_TIMER_STEP) {
  		touch_softlockup_watchdog();
  		if (i >= i_next) {
-@@ -776,6 +797,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -776,6 +806,7 @@ void vpanic(const char *fmt, va_list args)
  		}
  		mdelay(PANIC_TIMER_STEP);
  	}
@@ -965,7 +1048,7 @@ index 213725b61..beb1f9878 100644
  }
  EXPORT_SYMBOL(vpanic);
  
-@@ -1039,6 +1061,10 @@ bool oops_may_print(void)
+@@ -1039,6 +1070,10 @@ bool oops_may_print(void)
   */
  void oops_enter(void)
  {
