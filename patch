@@ -24,7 +24,7 @@ index 000000000..357197121
 +endif
 diff --git a/arch/x86/Kconfig.weak b/arch/x86/Kconfig.weak
 new file mode 100644
-index 000000000..1f2c698c1
+index 000000000..cf12be100
 --- /dev/null
 +++ b/arch/x86/Kconfig.weak
 @@ -0,0 +1,96 @@
@@ -79,7 +79,7 @@ index 000000000..1f2c698c1
 +	bool "Make all pages like user page (DANGEROUS)"
 +	default n
 +	depends on X86_64
-+	depends on !MITIGATON_PAGE_TABLE_ISOLATION
++	depends on !MITIGATION_PAGE_TABLE_ISOLATION
 +	help
 +		Treat all pages as the user page with __USR bit masking. 
 +		You might want to disable SMAP, SMEP.
