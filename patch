@@ -24,10 +24,10 @@ index 000000000..357197121
 +endif
 diff --git a/arch/x86/Kconfig.weak b/arch/x86/Kconfig.weak
 new file mode 100644
-index 000000000..cf12be100
+index 000000000..8262769c0
 --- /dev/null
 +++ b/arch/x86/Kconfig.weak
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,98 @@
 +# Weakening options for X86
 +config WEAKEN_NO_TASK_CHECK
 +	bool "Don't check current task context"
@@ -71,7 +71,7 @@ index 000000000..cf12be100
 +	depends on X86_64
 +	select WEAKEN_NO_STATIC_PROTECTION
 +	help
-+		Make all pages RWX (set __RW / clear __NX). 
++		Make all pages RWX (set __RW / clear __NX).
 +		This option will take too long time for re-compiling when you change.
 +		Enabling this may cause problem for some applications.
 +
@@ -81,7 +81,7 @@ index 000000000..cf12be100
 +	depends on X86_64
 +	depends on !MITIGATION_PAGE_TABLE_ISOLATION
 +	help
-+		Treat all pages as the user page with __USR bit masking. 
++		Treat all pages as the user page with __USR bit masking.
 +		You might want to disable SMAP, SMEP.
 +
 +config WEAKEN_RELAX_NMI_UACCESS
@@ -94,7 +94,7 @@ index 000000000..cf12be100
 +	default n
 +	depends on X86_64
 +	help
-+		Ignore a kernel oops. Also skip the current instruction 
++		Ignore a kernel oops. Also skip the current instruction
 +		and continue running. This will cause heavy lag with log spam.
 +		Therefore, it's not that meaningful option.
 +
@@ -117,6 +117,8 @@ index 000000000..cf12be100
 +		bool "Disable UMIP"
 +		default n
 +		depends on X86
++		help
++			Same as X86_UMIP
 +
 +	config WEAKEN_DISABLE_CET
 +		bool "Disable CET"
@@ -125,10 +127,10 @@ index 000000000..cf12be100
 +endmenu
 +
 diff --git a/arch/x86/include/asm/insn.h b/arch/x86/include/asm/insn.h
-index 846d21c1a..30673307b 100644
+index 846d21c1a..369aedb9c 100644
 --- a/arch/x86/include/asm/insn.h
 +++ b/arch/x86/include/asm/insn.h
-@@ -341,4 +341,60 @@ static inline int insn_masking_exception(struct insn *insn)
+@@ -341,4 +341,66 @@ static inline int insn_masking_exception(struct insn *insn)
  		 X86_MODRM_REG(insn->modrm.bytes[0]) == 2);
  }
  
@@ -138,8 +140,8 @@ index 846d21c1a..30673307b 100644
 + * Instruction skiping function for convenience.
 + * If success, return 0. Or returns error code when failed
 + */
-+static inline int insn_skip_instruction(unsigned long *ip_ptr, 
-+		long unsigned int (*copier)(void *, const void *, long unsigned int), 
++static inline int insn_skip_instruction(unsigned long *ip_ptr,
++		unsigned long (*copier)(void *, const void *, unsigned long),
 +		int signr, int is_64bit)
 +{
 +	struct insn obj;
@@ -151,20 +153,23 @@ index 846d21c1a..30673307b 100644
 +		return code;
 +
 +	insn_init(&obj, inst_buf, MAX_INSN_SIZE, is_64bit);
-+	if (!(code = insn_get_length(&obj))) *ip_ptr += obj.length;
++	code = insn_get_length(&obj);
++	if (!code)
++		*ip_ptr += obj.length;
 +	else {
 +		// Forward one byte when signr is SIGILL (insane decision)
 +		if (signr == 0x04 /* SIGILL */)
-+			++ *ip_ptr;
++			++*ip_ptr;
 +
-+		else return code;
++		else
++			return code;
 +	}
 +	return 0;
 +}
 +
 +/* li: long int */
-+static inline int insn_skip_instruction_li(unsigned long *ip_ptr, 
-+		long int (*copier)(void *, const void *, long unsigned int), 
++static inline int insn_skip_instruction_li(unsigned long *ip_ptr,
++		long (*copier)(void *, const void *, unsigned long),
 +		int signr, int is_64bit)
 +{
 +	struct insn obj;
@@ -176,17 +181,20 @@ index 846d21c1a..30673307b 100644
 +		return code;
 +
 +	insn_init(&obj, inst_buf, MAX_INSN_SIZE, is_64bit);
-+	if (!(code = insn_get_length(&obj))) *ip_ptr += obj.length;
++	code = insn_get_length(&obj);
++	if (!code)
++		*ip_ptr += obj.length;
 +	else {
 +		// Forward one byte when signr is SIGILL (insane decision)
 +		if (signr == 0x04 /* SIGILL */)
-+			++ *ip_ptr;
++			++*ip_ptr;
 +
-+		else return code;
++		else
++			return code;
 +	}
 +	return 0;
 +}
-+#endif /* CONFIG_WEAKEN_SKIP_INST */
++#endif
 +
  #endif /* _ASM_X86_INSN_H */
 diff --git a/arch/x86/include/asm/pgtable.h b/arch/x86/include/asm/pgtable.h
@@ -364,7 +372,7 @@ index a3df21d26..6a35aa67d 100644
  	/*
  	 * Clear/Set all flags overridden by options, need do it
 diff --git a/arch/x86/kernel/dumpstack.c b/arch/x86/kernel/dumpstack.c
-index b10684ded..7f101ccd0 100644
+index b10684ded..06cb425e3 100644
 --- a/arch/x86/kernel/dumpstack.c
 +++ b/arch/x86/kernel/dumpstack.c
 @@ -23,6 +23,10 @@
@@ -400,7 +408,7 @@ index b10684ded..7f101ccd0 100644
  	rewind_stack_and_make_dead(signr);
 +#else
 +	// Skip the instruction, which is the kernel code.
-+	if (!insn_skip_instruction_li(&regs->ip, copy_from_kernel_nofault, 
++	if (!insn_skip_instruction_li(&regs->ip, copy_from_kernel_nofault,
 +				0, IS_ENABLED(CONFIG_X86_64)))
 +		return;
 +
@@ -422,7 +430,7 @@ index b10684ded..7f101ccd0 100644
  			current->thread.trap_nr, SIGSEGV) == NOTIFY_STOP)
  		return 1;
 diff --git a/arch/x86/kernel/traps.c b/arch/x86/kernel/traps.c
-index 30aa83699..0df670c22 100644
+index 30aa83699..e073d7773 100644
 --- a/arch/x86/kernel/traps.c
 +++ b/arch/x86/kernel/traps.c
 @@ -72,6 +72,10 @@
@@ -436,7 +444,7 @@ index 30aa83699..0df670c22 100644
  #ifdef CONFIG_X86_64
  #include <asm/x86_init.h>
  #else
-@@ -341,11 +345,18 @@ do_trap(int trapnr, int signr, char *str, struct pt_regs *regs,
+@@ -341,7 +345,12 @@ do_trap(int trapnr, int signr, char *str, struct pt_regs *regs,
  		return;
  
  	show_signal(tsk, signr, "trap ", str, regs, error_code);
@@ -449,19 +457,8 @@ index 30aa83699..0df670c22 100644
 +#endif
  	if (!sicode)
  		force_sig(signr);
--	else
-+	else {
- 		force_sig_fault(signr, sicode, addr);
-+	}
-+	
- }
- NOKPROBE_SYMBOL(do_trap);
- 
-@@ -905,10 +916,18 @@ static bool gp_try_fixup_and_notify(struct pt_regs *regs, int trapnr,
- static void gp_user_force_sig_segv(struct pt_regs *regs, int trapnr,
- 				   unsigned long error_code, const char *str)
- {
-+	
+ 	else
+@@ -908,7 +917,14 @@ static void gp_user_force_sig_segv(struct pt_regs *regs, int trapnr,
  	current->thread.error_code = error_code;
  	current->thread.trap_nr = trapnr;
  	show_signal(current, SIGSEGV, "", str, regs, error_code);
@@ -478,7 +475,7 @@ index 30aa83699..0df670c22 100644
  
  DEFINE_IDTENTRY_ERRORCODE(exc_general_protection)
 diff --git a/arch/x86/mm/fault.c b/arch/x86/mm/fault.c
-index 45b99c3b1..767eaabe7 100644
+index 45b99c3b1..a9c7bbafd 100644
 --- a/arch/x86/mm/fault.c
 +++ b/arch/x86/mm/fault.c
 @@ -37,6 +37,10 @@
@@ -502,8 +499,8 @@ index 45b99c3b1..767eaabe7 100644
 +		/*
 +		 * Don't send the signal segv, just advance RIP past the current instruction.
 +		 * However RIP has userspace address. So it should use copy_from_user.
-+		*/
-+		if (!insn_skip_instruction(&regs->ip, copy_from_user, 0, 
++		 */
++		if (!insn_skip_instruction(&regs->ip, copy_from_user, 0,
 +					user_64bit_mode(regs)))
 +			return;
 +#endif
@@ -547,10 +544,26 @@ index 42115ac07..be4ab5ebf 100644
  	/*
  	 * Allow everything during early boot before 'x86_virt_bits'
 diff --git a/arch/x86/mm/pat/set_memory.c b/arch/x86/mm/pat/set_memory.c
-index d023a40a1..0733eec2a 100644
+index d023a40a1..7b033e28a 100644
 --- a/arch/x86/mm/pat/set_memory.c
 +++ b/arch/x86/mm/pat/set_memory.c
-@@ -599,6 +599,8 @@ static inline void check_conflict(int warnlvl, pgprot_t prot, pgprotval_t val,
+@@ -481,6 +481,7 @@ static void cpa_flush(struct cpa_data *cpa, int cache)
+ 		cpa_collapse_large_pages(cpa);
+ }
+ 
++#ifndef CONFIG_WEAKEN_NO_STATIC_PROTECTION
+ static bool overlaps(unsigned long r1_start, unsigned long r1_end,
+ 		     unsigned long r2_start, unsigned long r2_end)
+ {
+@@ -589,6 +590,7 @@ static pgprotval_t protect_kernel_text_ro(unsigned long start,
+ 	return 0;
+ }
+ #endif
++#endif /* CONFIG_WEAKEN_NO_STATIC_PROTECTION */
+ 
+ static inline bool conflicts(pgprot_t prot, pgprotval_t val)
+ {
+@@ -599,6 +601,8 @@ static inline void check_conflict(int warnlvl, pgprot_t prot, pgprotval_t val,
  				  unsigned long start, unsigned long end,
  				  unsigned long pfn, const char *txt)
  {
@@ -559,7 +572,7 @@ index d023a40a1..0733eec2a 100644
  	static const char *lvltxt[] = {
  		[CPA_CONFLICT]	= "conflict",
  		[CPA_PROTECT]	= "protect",
-@@ -611,6 +613,7 @@ static inline void check_conflict(int warnlvl, pgprot_t prot, pgprotval_t val,
+@@ -611,6 +615,7 @@ static inline void check_conflict(int warnlvl, pgprot_t prot, pgprotval_t val,
  	pr_warn("CPA %8s %10s: 0x%016lx - 0x%016lx PFN %lx req %016llx prevent %016llx\n",
  		lvltxt[warnlvl], txt, start, end, pfn, (unsigned long long)pgprot_val(prot),
  		(unsigned long long)val);
@@ -567,7 +580,7 @@ index d023a40a1..0733eec2a 100644
  }
  
  /*
-@@ -623,6 +626,7 @@ static inline pgprot_t static_protections(pgprot_t prot, unsigned long start,
+@@ -623,6 +628,7 @@ static inline pgprot_t static_protections(pgprot_t prot, unsigned long start,
  					  unsigned long pfn, unsigned long npg,
  					  unsigned long lpsize, int warnlvl)
  {
@@ -575,7 +588,7 @@ index d023a40a1..0733eec2a 100644
  	pgprotval_t forbidden, res;
  	unsigned long end;
  
-@@ -662,6 +666,11 @@ static inline pgprot_t static_protections(pgprot_t prot, unsigned long start,
+@@ -662,6 +668,11 @@ static inline pgprot_t static_protections(pgprot_t prot, unsigned long start,
  	forbidden |= res;
  
  	return __pgprot(pgprot_val(prot) & ~forbidden);
@@ -587,7 +600,7 @@ index d023a40a1..0733eec2a 100644
  }
  
  /*
-@@ -2302,29 +2311,60 @@ int clear_mce_nospec(unsigned long pfn)
+@@ -2302,29 +2313,59 @@ int clear_mce_nospec(unsigned long pfn)
  EXPORT_SYMBOL_GPL(clear_mce_nospec);
  #endif /* CONFIG_X86_64 */
  
@@ -596,11 +609,10 @@ index d023a40a1..0733eec2a 100644
 +static int set_memory_rwx(unsigned long addr, int numpages)
 +{
 +	// If NX bit isn't supported, Toggle only the RW bits.
-+	if (!(__supported_pte_mask & _PAGE_NX)) {
++	if (!(__supported_pte_mask & _PAGE_NX))
 +		return change_page_attr_set(&addr, numpages, __pgprot(_PAGE_RW), 0);
-+	}
 +
-+	return change_page_attr_set_clr(&addr, numpages, __pgprot(_PAGE_RW), 
++	return change_page_attr_set_clr(&addr, numpages, __pgprot(_PAGE_RW),
 +					__pgprot(_PAGE_NX), 0, 0, NULL);
 +}
 +#endif
@@ -648,11 +660,10 @@ index d023a40a1..0733eec2a 100644
  	pgprot_t clr = __pgprot(_PAGE_RW | _PAGE_DIRTY);
  
  	if (__supported_pte_mask & _PAGE_NX)
-@@ -2332,11 +2372,17 @@ int set_memory_rox(unsigned long addr, int numpages)
+@@ -2332,11 +2373,16 @@ int set_memory_rox(unsigned long addr, int numpages)
  
  	return change_page_attr_set_clr(&addr, numpages, __pgprot(0), clr, 0,
  					CPA_COLLAPSE, NULL);
-+	
 +#endif
  }
  
@@ -667,31 +678,49 @@ index d023a40a1..0733eec2a 100644
  
  int set_memory_np(unsigned long addr, int numpages)
 diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
-index 1023acadd..1b0613d7b 100644
+index 1023acadd..1dced943a 100644
 --- a/arch/x86/mm/tlb.c
 +++ b/arch/x86/mm/tlb.c
-@@ -1746,10 +1746,11 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
+@@ -1745,11 +1745,11 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
+  */
  bool nmi_uaccess_okay(void)
  {
- 	struct mm_struct *loaded_mm = this_cpu_read(cpu_tlbstate.loaded_mm);
--	struct mm_struct *current_mm = current->mm;
--
- 	VM_WARN_ON_ONCE(!loaded_mm);
-+	
 +#ifndef CONFIG_WEAKEN_RELAX_NMI_UACCESS
+ 	struct mm_struct *loaded_mm = this_cpu_read(cpu_tlbstate.loaded_mm);
+ 	struct mm_struct *current_mm = current->mm;
  
-+	struct mm_struct *current_mm = current->mm;
+ 	VM_WARN_ON_ONCE(!loaded_mm);
+-
  	/*
  	 * The condition we want to check is
  	 * current_mm->pgd == __va(read_cr3_pa()).  This may be slow, though,
-@@ -1764,7 +1765,7 @@ bool nmi_uaccess_okay(void)
- 		return false;
+@@ -1765,6 +1765,11 @@ bool nmi_uaccess_okay(void)
  
  	VM_WARN_ON_ONCE(__pa(current_mm->pgd) != read_cr3_pa());
--
+ 
++#else
++	struct mm_struct *loaded_mm = this_cpu_read(cpu_tlbstate.loaded_mm);
++
++	VM_WARN_ON_ONCE(!loaded_mm);
 +#endif
  	return true;
  }
+ 
+diff --git a/include/asm-generic/access_ok.h b/include/asm-generic/access_ok.h
+index 2866ae61b..44c30e5af 100644
+--- a/include/asm-generic/access_ok.h
++++ b/include/asm-generic/access_ok.h
+@@ -37,7 +37,11 @@ static inline int __access_ok(const void __user *ptr, unsigned long size)
+ 	    !IS_ENABLED(CONFIG_MMU))
+ 		return true;
+ 
++#ifdef CONFIG_WEAKEN_ALWAYS_ACCESS_OK
++	return true;
++#else
+ 	return (size <= limit) && (addr <= (limit - size));
++#endif
+ }
+ #endif
  
 diff --git a/include/linux/panic.h b/include/linux/panic.h
 index f1dd417e5..ac4ecfacd 100644
@@ -800,10 +829,10 @@ index e363232b4..6ffd73807 100644
  	/*
 diff --git a/kernel/Kconfig.weak b/kernel/Kconfig.weak
 new file mode 100644
-index 000000000..11462f8c5
+index 000000000..022ea43a8
 --- /dev/null
 +++ b/kernel/Kconfig.weak
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,43 @@
 +# Weakening options
 +config WEAKEN_NO_MIGHT_FAULT
 +	bool "Disable might_fault on usercopy"
@@ -811,6 +840,10 @@ index 000000000..11462f8c5
 +
 +config WEAKEN_XC_USERCOPY
 +	bool "Don't check Masked user address"
++	default n
++
++config WEAKEN_ALWAYS_ACCESS_OK
++	bool "Don't check address range in __access_ok"
 +	default n
 +
 +config WEAKEN_UNRESTRICT_KEXEC
@@ -825,7 +858,7 @@ index 000000000..11462f8c5
 +	default n
 +	depends on !OBJTOOL_WERROR
 +	help
-+		Ignore kernel panic, and continue execution. Technically, 
++		Ignore kernel panic, and continue execution. Technically,
 +		it makes the functions 'vpanic' and 'panic' returnable.
 +		So, you need to set Kconfig option "OBJTOOL_WERROR" to N
 +		when building.
@@ -844,15 +877,20 @@ index 000000000..11462f8c5
 +source "arch/Kconfig.weak"
 +
 diff --git a/kernel/kexec.c b/kernel/kexec.c
-index 90756dc63..be6398c18 100644
+index 90756dc63..844fc02c0 100644
 --- a/kernel/kexec.c
 +++ b/kernel/kexec.c
-@@ -205,10 +205,11 @@ static inline int kexec_load_check(unsigned long nr_segments,
+@@ -202,13 +202,16 @@ static int do_kexec_load(unsigned long entry, unsigned long nr_segments,
+ static inline int kexec_load_check(unsigned long nr_segments,
+ 				   unsigned long flags)
+ {
++	int result;
++
++#ifndef CONFIG_WEAKEN_UNRESTRICT_KEXEC
  	int image_type = (flags & KEXEC_ON_CRASH) ?
  			 KEXEC_TYPE_CRASH : KEXEC_TYPE_DEFAULT;
- 	int result;
--
-+#ifndef CONFIG_WEAKEN_UNRESTRICT_KEXEC
+-	int result;
+ 
  	/* We only trust the superuser with rebooting the system. */
  	if (!kexec_load_permitted(image_type))
  		return -EPERM;
@@ -880,7 +918,7 @@ index dc770b9a6..aca1e2fd4 100644
  	/* Check limit counter and decrease it.*/
  	limit = (kexec_image_type == KEXEC_TYPE_CRASH) ?
 diff --git a/kernel/panic.c b/kernel/panic.c
-index 213725b61..b8669f353 100644
+index 213725b61..a06630541 100644
 --- a/kernel/panic.c
 +++ b/kernel/panic.c
 @@ -250,10 +250,12 @@ static __init int kernel_panic_sysfs_init(void)
@@ -949,7 +987,7 @@ index 213725b61..b8669f353 100644
  	else
  		crash_smp_send_stop();
  }
-+#endif	
++#endif
  
  /**
   * vpanic - halt the system
@@ -1029,15 +1067,6 @@ index 213725b61..b8669f353 100644
  	debug_locks_off();
  	console_flush_on_panic(CONSOLE_FLUSH_PENDING);
  
-@@ -715,7 +742,7 @@ void vpanic(const char *fmt, va_list args)
- 
- 	if (!panic_blink)
- 		panic_blink = no_blink;
--
-+	
- 	if (panic_timeout > 0) {
- 		/*
- 		 * Delay timeout seconds before rebooting the machine.
 @@ -742,6 +769,8 @@ void vpanic(const char *fmt, va_list args)
  			reboot_mode = panic_reboot_mode;
  		emergency_restart();
@@ -1098,10 +1127,10 @@ index 1244dcac2..7244d69c7 100644
 +
  endmenu # Kernel hacking
 diff --git a/mm/mprotect.c b/mm/mprotect.c
-index 9cbf932b0..9129f6dc1 100644
+index 9cbf932b0..7103e17d3 100644
 --- a/mm/mprotect.c
 +++ b/mm/mprotect.c
-@@ -40,6 +40,11 @@
+@@ -40,6 +40,10 @@
  
  static bool maybe_change_pte_writable(struct vm_area_struct *vma, pte_t pte)
  {
@@ -1109,11 +1138,10 @@ index 9cbf932b0..9129f6dc1 100644
 +	return true;
 +#else
 +	// What if it always return true?
-+	
  	if (WARN_ON_ONCE(!(vma->vm_flags & VM_WRITE)))
  		return false;
  
-@@ -56,6 +61,7 @@ static bool maybe_change_pte_writable(struct vm_area_struct *vma, pte_t pte)
+@@ -56,6 +60,7 @@ static bool maybe_change_pte_writable(struct vm_area_struct *vma, pte_t pte)
  		return false;
  
  	return true;
@@ -1121,7 +1149,7 @@ index 9cbf932b0..9129f6dc1 100644
  }
  
  static bool can_change_private_pte_writable(struct vm_area_struct *vma,
-@@ -933,6 +939,7 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
+@@ -933,6 +938,7 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
  		newflags |= (vma->vm_flags & ~mask_off_old_flags);
  		new_vma_flags = legacy_to_vma_flags(newflags);
  
@@ -1129,7 +1157,7 @@ index 9cbf932b0..9129f6dc1 100644
  		/* newflags >> 4 shift VM_MAY% in place of VM_% */
  		if ((newflags & ~(newflags >> 4)) & VM_ACCESS_FLAGS) {
  			error = -EACCES;
-@@ -943,6 +950,7 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
+@@ -943,6 +949,7 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
  			error = -EACCES;
  			break;
  		}

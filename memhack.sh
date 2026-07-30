@@ -28,7 +28,7 @@ function writeat()
         #
         # default input: stdin
 
-        dd of=$1 status=none bs=1 seek=$(($2)) count=$3 conv=notrunc
+        dd of=$1 seek=$(($2)) count=$3 bs=1 conv=notrunc oflag=seek_bytes status=none
 }
 
 function lsvaddr()
@@ -50,7 +50,7 @@ case $1 in
                         echo -e "reading from stdin.."
 			tmp=$(mktemp)
                         cat /dev/stdin > $tmp
-			len=$(ls -l | awk '{print $5}')
+			len=$(stat -c "%s" $tmp)
 			writeat $mem $2 $len < $tmp
 			rm $tmp
 		else
@@ -115,7 +115,7 @@ case $1 in
                 offset=$4
                 table=$(lsvaddr $2)
                 lines=$(echo "$table" | wc -l)
-                if [[ $3 -lt 1 ]] || [[ $3 -gt lines ]];
+                if [[ $3 -lt 1 ]] || [[ $3 -gt $lines ]];
                 then
                         echo -e "out of index: $3"
                         exit 4
@@ -150,7 +150,7 @@ case $1 in
                         echo -e "exceeding range(0 <= VALUE < 256)"
                         exit 7
                 fi
-                char=$(printf "%x" $char)
+                char=$(printf "%02x" $char)
                 perl -E 'say "\x'$char'"x'$size | writeat /proc/$2/mem $addr $size
                 echo -e "success"
         ;;
