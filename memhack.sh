@@ -15,7 +15,7 @@ mem="/dev/mem"
 
 function getlen()
 {
-        local len=$(echo -e "$1" | wc -c)
+        local len=$(printf "%b" "$1" | wc -c)
         len=$(expr $len - 1)
         echo $len
 }
@@ -54,7 +54,7 @@ case $1 in
 			writeat $mem $2 $len < $tmp
 			rm $tmp
 		else
-                	echo -e "$data" | writeat $mem $2 $len
+                	printf "%b" "$data" | writeat $mem $2 $len
 		fi
                 echo -e "Memory value altered."
         ;;
@@ -132,7 +132,7 @@ case $1 in
                         data=$(cat /dev/stdin)
                         len=$(getlen "$data")
                 fi
-                echo -e "$data" | writeat /proc/$2/mem $addr $len
+                printf "%b" "$data" | writeat /proc/$2/mem $addr $len
                 echo -e "payload has been written"
         ;;
         vs | vaset )
