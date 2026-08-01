@@ -24,11 +24,12 @@ index 000000000..357197121
 +endif
 diff --git a/arch/x86/Kconfig.weak b/arch/x86/Kconfig.weak
 new file mode 100644
-index 000000000..8262769c0
+index 000000000..8437fe86b
 --- /dev/null
 +++ b/arch/x86/Kconfig.weak
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,90 @@
 +# Weakening options for X86
++# Make sure all options below have X86 dependency explicitly.
 +config WEAKEN_NO_TASK_CHECK
 +	bool "Don't check current task context"
 +	default n
@@ -57,6 +58,8 @@ index 000000000..8262769c0
 +	bool "Suppress logs when CPA conflicts"
 +	default n
 +	depends on X86
++	help
++		Useful if you enable RWX option.
 +
 +config WEAKEN_NO_STATIC_PROTECTION
 +	bool "Disable static protection"
@@ -71,9 +74,10 @@ index 000000000..8262769c0
 +	depends on X86_64
 +	select WEAKEN_NO_STATIC_PROTECTION
 +	help
-+		Make all pages RWX (set __RW / clear __NX).
-+		This option will take too long time for re-compiling when you change.
++		Make ALL PAGES RWX (set __RW / clear __NX), also including read only pages.
++		This option will take too long time for re-compiling when you toggle it.
 +		Enabling this may cause problem for some applications.
++		You might want to disable all other mitigation/hardening options.
 +
 +config WEAKEN_PAGE_USR
 +	bool "Make all pages like user page (DANGEROUS)"
@@ -82,7 +86,7 @@ index 000000000..8262769c0
 +	depends on !MITIGATION_PAGE_TABLE_ISOLATION
 +	help
 +		Treat all pages as the user page with __USR bit masking.
-+		You might want to disable SMAP, SMEP.
++		You might want to disable SMAP, SMEP with Kconfig or boot parameters.
 +
 +config WEAKEN_RELAX_NMI_UACCESS
 +	bool "Relaxed NMI uaccess"
@@ -104,101 +108,36 @@ index 000000000..8262769c0
 +		default n
 +		depends on X86
 +		help
-+			Alternative is 'nosmep' boot option.
++			Alternative is 'clearcpuid=smep' boot option.
 +
 +	config WEAKEN_DISABLE_SMAP
 +		bool "Disable SMAP"
 +		default n
 +		depends on X86
 +		help
-+			Alternative is 'nosmap' boot option.
-+
-+	config WEAKEN_DISABLE_UMIP
-+		bool "Disable UMIP"
-+		default n
-+		depends on X86
-+		help
-+			Same as X86_UMIP
-+
-+	config WEAKEN_DISABLE_CET
-+		bool "Disable CET"
-+		default n
-+		depends on X86
++			Alternative is 'clearcpuid=smap' boot option.
 +endmenu
 +
-diff --git a/arch/x86/include/asm/insn.h b/arch/x86/include/asm/insn.h
-index 846d21c1a..369aedb9c 100644
---- a/arch/x86/include/asm/insn.h
-+++ b/arch/x86/include/asm/insn.h
-@@ -341,4 +341,66 @@ static inline int insn_masking_exception(struct insn *insn)
- 		 X86_MODRM_REG(insn->modrm.bytes[0]) == 2);
- }
- 
+diff --git a/arch/x86/include/asm/insn-weak.h b/arch/x86/include/asm/insn-weak.h
+new file mode 100644
+index 000000000..c89a967f1
+--- /dev/null
++++ b/arch/x86/include/asm/insn-weak.h
+@@ -0,0 +1,12 @@
++#ifndef _ASM_X86_INSN_WEAK_H
++#define _ASM_X86_INSN_WEAK_H
++
 +#if defined(CONFIG_WEAKEN_SKIP_INST) || defined(CONFIG_WEAKEN_IGNORE_OOPS)
 +
-+/*
-+ * Instruction skiping function for convenience.
-+ * If success, return 0. Or returns error code when failed
-+ */
-+static inline int insn_skip_instruction(unsigned long *ip_ptr,
-+		unsigned long (*copier)(void *, const void *, unsigned long),
-+		int signr, int is_64bit)
-+{
-+	struct insn obj;
-+	unsigned char inst_buf[MAX_INSN_SIZE] = "";
-+	int code = copier(inst_buf, (void *)*ip_ptr, MAX_INSN_SIZE);
-+	/* This will be a result of copy_from_user or copy_from_kernel_nofault etc. */
++struct pt_regs;
 +
-+	if (code)
-+		return code;
++int insn_skip_instruction(struct pt_regs *regs, int signr);
 +
-+	insn_init(&obj, inst_buf, MAX_INSN_SIZE, is_64bit);
-+	code = insn_get_length(&obj);
-+	if (!code)
-+		*ip_ptr += obj.length;
-+	else {
-+		// Forward one byte when signr is SIGILL (insane decision)
-+		if (signr == 0x04 /* SIGILL */)
-+			++*ip_ptr;
-+
-+		else
-+			return code;
-+	}
-+	return 0;
-+}
-+
-+/* li: long int */
-+static inline int insn_skip_instruction_li(unsigned long *ip_ptr,
-+		long (*copier)(void *, const void *, unsigned long),
-+		int signr, int is_64bit)
-+{
-+	struct insn obj;
-+	unsigned char inst_buf[MAX_INSN_SIZE] = "";
-+	int code = copier(inst_buf, (void *)*ip_ptr, MAX_INSN_SIZE);
-+	/* This will be a result of copy_from_user or copy_from_kernel_nofault etc. */
-+
-+	if (code)
-+		return code;
-+
-+	insn_init(&obj, inst_buf, MAX_INSN_SIZE, is_64bit);
-+	code = insn_get_length(&obj);
-+	if (!code)
-+		*ip_ptr += obj.length;
-+	else {
-+		// Forward one byte when signr is SIGILL (insane decision)
-+		if (signr == 0x04 /* SIGILL */)
-+			++*ip_ptr;
-+
-+		else
-+			return code;
-+	}
-+	return 0;
-+}
 +#endif
 +
- #endif /* _ASM_X86_INSN_H */
++#endif /* _ASM_X86_INSN_WEAK_H */
 diff --git a/arch/x86/include/asm/pgtable.h b/arch/x86/include/asm/pgtable.h
-index ac295ca6c..46ca0e873 100644
+index ac295ca6c..a7f79b49d 100644
 --- a/arch/x86/include/asm/pgtable.h
 +++ b/arch/x86/include/asm/pgtable.h
 @@ -1024,8 +1024,13 @@ static inline unsigned long pmd_page_vaddr(pmd_t pmd)
@@ -215,7 +154,7 @@ index ac295ca6c..46ca0e873 100644
  }
  
  static inline unsigned long pages_to_mb(unsigned long npg)
-@@ -1136,13 +1141,21 @@ static inline int pgd_bad(pgd_t pgd)
+@@ -1136,6 +1141,10 @@ static inline int pgd_bad(pgd_t pgd)
  {
  	unsigned long ignore_flags = _PAGE_USER;
  
@@ -226,17 +165,6 @@ index ac295ca6c..46ca0e873 100644
  	if (!pgtable_l5_enabled())
  		return 0;
  
- 	if (IS_ENABLED(CONFIG_MITIGATION_PAGE_TABLE_ISOLATION))
- 		ignore_flags |= _PAGE_NX;
- 
-+#ifndef CONFIG_WEAKEN_PAGE_USR
- 	return (pgd_flags(pgd) & ~ignore_flags) != _KERNPG_TABLE;
-+#else
-+	return (pgd_flags(pgd) & ~ignore_flags) != (_KERNPG_TABLE | _PAGE_USER);
-+#endif
- }
- 
- static inline int pgd_none(pgd_t pgd)
 diff --git a/arch/x86/include/asm/pgtable_types.h b/arch/x86/include/asm/pgtable_types.h
 index 2ec250ba4..435795756 100644
 --- a/arch/x86/include/asm/pgtable_types.h
@@ -339,10 +267,10 @@ index 2ec250ba4..435795756 100644
  
  #define __PAGE_KERNEL_IO		__PAGE_KERNEL
 diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
-index a3df21d26..6a35aa67d 100644
+index a3df21d26..43c82f202 100644
 --- a/arch/x86/kernel/cpu/common.c
 +++ b/arch/x86/kernel/cpu/common.c
-@@ -2057,9 +2057,17 @@ static void identify_cpu(struct cpuinfo_x86 *c)
+@@ -2057,8 +2057,13 @@ static void identify_cpu(struct cpuinfo_x86 *c)
  	/* Disable the PN if appropriate */
  	squash_the_stupid_serial_number(c);
  
@@ -353,26 +281,11 @@ index a3df21d26..6a35aa67d 100644
 +#ifndef CONFIG_WEAKEN_DISABLE_SMAP
  	setup_smap(c);
 +#endif
-+
-+#ifndef CONFIG_WEAKEN_DISABLE_UMIP
  	setup_umip(c);
-+#endif
  
  	/*
- 	 * The vendor-specific functions might have changed features.
-@@ -2086,7 +2094,10 @@ static void identify_cpu(struct cpuinfo_x86 *c)
- 
- 	x86_init_rdrand(c);
- 	setup_pku(c);
-+
-+#ifndef CONFIG_WEAKEN_DISABLE_CET
- 	setup_cet(c);
-+#endif
- 
- 	/*
- 	 * Clear/Set all flags overridden by options, need do it
 diff --git a/arch/x86/kernel/dumpstack.c b/arch/x86/kernel/dumpstack.c
-index b10684ded..06cb425e3 100644
+index b10684ded..05d34b392 100644
 --- a/arch/x86/kernel/dumpstack.c
 +++ b/arch/x86/kernel/dumpstack.c
 @@ -23,6 +23,10 @@
@@ -380,7 +293,7 @@ index b10684ded..06cb425e3 100644
  #include <asm/unwind.h>
  
 +#ifdef CONFIG_WEAKEN_IGNORE_OOPS
-+ #include <asm/insn.h>
++ #include <asm/insn-weak.h>
 +#endif
 +
  static int die_counter;
@@ -398,7 +311,7 @@ index b10684ded..06cb425e3 100644
  	/*
  	 * Even if named copy_from_user_nmi() this can be invoked from
  	 * other contexts and will not try to resolve a pagefault, which is
-@@ -404,8 +409,19 @@ void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
+@@ -404,8 +409,17 @@ void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
  	 * Before we rewind the stack, we have to tell KASAN that we're going to
  	 * reuse the task stack and that existing poisons are invalid.
  	 */
@@ -407,9 +320,7 @@ index b10684ded..06cb425e3 100644
  	kasan_unpoison_task_stack(current);
  	rewind_stack_and_make_dead(signr);
 +#else
-+	// Skip the instruction, which is the kernel code.
-+	if (!insn_skip_instruction_li(&regs->ip, copy_from_kernel_nofault,
-+				0, IS_ENABLED(CONFIG_X86_64)))
++	if (!insn_skip_instruction(regs, signr))
 +		return;
 +
 +	kasan_unpoison_task_stack(current);
@@ -418,7 +329,7 @@ index b10684ded..06cb425e3 100644
  }
  NOKPROBE_SYMBOL(oops_end);
  
-@@ -431,6 +447,10 @@ static int __die_body(const char *str, struct pt_regs *regs, long err)
+@@ -431,6 +445,10 @@ static int __die_body(const char *str, struct pt_regs *regs, long err)
  	show_regs(regs);
  	print_modules();
  
@@ -430,7 +341,7 @@ index b10684ded..06cb425e3 100644
  			current->thread.trap_nr, SIGSEGV) == NOTIFY_STOP)
  		return 1;
 diff --git a/arch/x86/kernel/traps.c b/arch/x86/kernel/traps.c
-index 30aa83699..e073d7773 100644
+index 30aa83699..7fa31f125 100644
 --- a/arch/x86/kernel/traps.c
 +++ b/arch/x86/kernel/traps.c
 @@ -72,6 +72,10 @@
@@ -438,35 +349,33 @@ index 30aa83699..e073d7773 100644
  #include <asm/vsyscall.h>
  
 +#ifdef CONFIG_WEAKEN_SKIP_INST
-+ #include <asm/insn.h>
++ #include <asm/insn-weak.h>
 +#endif
 +
  #ifdef CONFIG_X86_64
  #include <asm/x86_init.h>
  #else
-@@ -341,7 +345,12 @@ do_trap(int trapnr, int signr, char *str, struct pt_regs *regs,
+@@ -341,7 +345,11 @@ do_trap(int trapnr, int signr, char *str, struct pt_regs *regs,
  		return;
  
  	show_signal(tsk, signr, "trap ", str, regs, error_code);
 -
 +	// What if kernel doesn't occur a fault?
 +#ifdef CONFIG_WEAKEN_SKIP_INST
-+	if (!insn_skip_instruction(&regs->ip, copy_from_user, signr,
-+				user_64bit_mode(regs)))
++	if (!insn_skip_instruction(regs, signr))
 +		return;
 +#endif
  	if (!sicode)
  		force_sig(signr);
  	else
-@@ -908,7 +917,14 @@ static void gp_user_force_sig_segv(struct pt_regs *regs, int trapnr,
+@@ -908,7 +916,13 @@ static void gp_user_force_sig_segv(struct pt_regs *regs, int trapnr,
  	current->thread.error_code = error_code;
  	current->thread.trap_nr = trapnr;
  	show_signal(current, SIGSEGV, "", str, regs, error_code);
 -	force_sig(SIGSEGV);
 +	/* What if it just skip an instruction that caused GP? */
 +#ifdef CONFIG_WEAKEN_SKIP_INST
-+		if (!insn_skip_instruction(&regs->ip, copy_from_user, 0,
-+					user_64bit_mode(regs)))
++		if (!insn_skip_instruction(regs, SIGSEGV))
 +			return;
 +#endif
 +		force_sig(SIGSEGV); // Can I do anything at this point?
@@ -474,8 +383,77 @@ index 30aa83699..e073d7773 100644
  }
  
  DEFINE_IDTENTRY_ERRORCODE(exc_general_protection)
+diff --git a/arch/x86/lib/Makefile b/arch/x86/lib/Makefile
+index 2dba7f83e..2b4ed58de 100644
+--- a/arch/x86/lib/Makefile
++++ b/arch/x86/lib/Makefile
+@@ -62,3 +62,8 @@ endif
+         lib-y += cmpxchg16b_emu.o
+         lib-y += bhi.o
+ endif
++
++ifneq (,$(filter y,$(CONFIG_WEAKEN_SKIP_INST) $(CONFIG_WEAKEN_IGNORE_OOPS)))
++	lib-y += insn-weak.o
++endif
++
+diff --git a/arch/x86/lib/insn-weak.c b/arch/x86/lib/insn-weak.c
+new file mode 100644
+index 000000000..6db3e1ef1
+--- /dev/null
++++ b/arch/x86/lib/insn-weak.c
+@@ -0,0 +1,50 @@
++/*
++ * Instruction skiping function(s) for convenience.
++ */
++
++#include <linux/uaccess.h>
++#include <linux/signal.h>
++#include <asm/insn.h>
++#include <asm/ptrace.h>
++#include <asm/insn-weak.h>
++
++/*
++ * If success, return 0. Or returns error code when failed
++ */
++int insn_skip_instruction(struct pt_regs *regs, int signr)
++{
++	struct insn obj;
++	unsigned char buf[MAX_INSN_SIZE] = "";
++	int len = MAX_INSN_SIZE;
++	int ret;
++	int mode;
++
++	if (user_mode(regs)) {
++		/* First, simply copy them and proceed unless nothing fetched */
++		ret = copy_from_user(buf, (void __user *)regs->ip, MAX_INSN_SIZE);
++		if (ret == MAX_INSN_SIZE)
++			return -EINVAL;
++
++		len -= ret;
++		mode = user_64bit_mode(regs) ? INSN_MODE_64 : INSN_MODE_32;
++	} else {
++		/* Can't know how many bytes copied, or brute force it? */
++		if (copy_from_kernel_nofault(buf, (void *)regs->ip, MAX_INSN_SIZE))
++			return -EINVAL;
++
++		mode = INSN_MODE_KERN;
++	}
++
++	ret = insn_decode(&obj, buf, len, mode);
++	if (!ret)
++		regs->ip += obj.length;
++	else {
++		/* Forward one byte when signr is SIGILL (insane decision) */
++		if (signr == SIGILL)
++			++regs->ip;
++
++		else
++			return ret;
++	}
++	return 0;
++}
 diff --git a/arch/x86/mm/fault.c b/arch/x86/mm/fault.c
-index 45b99c3b1..a9c7bbafd 100644
+index 45b99c3b1..f6bafd07d 100644
 --- a/arch/x86/mm/fault.c
 +++ b/arch/x86/mm/fault.c
 @@ -37,6 +37,10 @@
@@ -483,13 +461,13 @@ index 45b99c3b1..a9c7bbafd 100644
  #include <asm/sev.h>			/* snp_dump_hva_rmpentry()	*/
  
 +#ifdef CONFIG_WEAKEN_SKIP_INST
-+ #include <asm/insn.h>			/* insn_init(), ...		*/
++ #include <asm/insn-weak.h>		/* insn_skip_instruction	*/
 +#endif
 +
  #define CREATE_TRACE_POINTS
  #include <trace/events/exceptions.h>
  
-@@ -828,8 +832,18 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
+@@ -828,8 +832,17 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
  
  	if (si_code == SEGV_PKUERR)
  		force_sig_pkuerr((void __user *)address, pkey);
@@ -500,8 +478,7 @@ index 45b99c3b1..a9c7bbafd 100644
 +		 * Don't send the signal segv, just advance RIP past the current instruction.
 +		 * However RIP has userspace address. So it should use copy_from_user.
 +		 */
-+		if (!insn_skip_instruction(&regs->ip, copy_from_user, 0,
-+					user_64bit_mode(regs)))
++		if (!insn_skip_instruction(regs, SIGSEGV))
 +			return;
 +#endif
  		force_sig_fault(SIGSEGV, si_code, (void __user *)address);
@@ -829,7 +806,7 @@ index e363232b4..6ffd73807 100644
  	/*
 diff --git a/kernel/Kconfig.weak b/kernel/Kconfig.weak
 new file mode 100644
-index 000000000..022ea43a8
+index 000000000..e3142532c
 --- /dev/null
 +++ b/kernel/Kconfig.weak
 @@ -0,0 +1,43 @@
@@ -870,7 +847,7 @@ index 000000000..022ea43a8
 +
 +config WEAKEN_OOPS_MSG
 +	bool "Add cooked message when oops"
-+	default y
++	default n
 +	help
 +		prints "hello, you are cooked. good luck." when oops
 +
