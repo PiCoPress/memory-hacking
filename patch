@@ -699,6 +699,36 @@ index 2866ae61b..44c30e5af 100644
  }
  #endif
  
+diff --git a/include/linux/mman.h b/include/linux/mman.h
+index 389521594..f2aef2e14 100644
+--- a/include/linux/mman.h
++++ b/include/linux/mman.h
+@@ -140,10 +140,25 @@ static inline bool arch_validate_flags(unsigned long flags)
+ static inline vm_flags_t
+ calc_vm_prot_bits(unsigned long prot, unsigned long pkey)
+ {
++#ifdef CONFIG_WEAKEN_VMA_RWX
++	/*
++	 * FIXME Giving RWX perm causes SIGSEGV in userspace processes.
++	 * Should handle some cases in other functions which is mmap related...
++	 * (But don't know?)
++	 *
++	 * Able to boot but can't work well.
++	 */
++	if(prot == PROT_NONE) /* Prevent access to guard page */
++		return arch_calc_vm_prot_bits(prot, pkey);
++
++	return	VM_READ	| VM_WRITE | VM_EXEC |
++		arch_calc_vm_prot_bits(prot, pkey);
++#else
+ 	return _calc_vm_trans(prot, PROT_READ,  VM_READ ) |
+ 	       _calc_vm_trans(prot, PROT_WRITE, VM_WRITE) |
+ 	       _calc_vm_trans(prot, PROT_EXEC,  VM_EXEC) |
+ 	       arch_calc_vm_prot_bits(prot, pkey);
++#endif
+ }
+ 
+ /*
 diff --git a/include/linux/panic.h b/include/linux/panic.h
 index f1dd417e5..ac4ecfacd 100644
 --- a/include/linux/panic.h
@@ -806,10 +836,10 @@ index e363232b4..6ffd73807 100644
  	/*
 diff --git a/kernel/Kconfig.weak b/kernel/Kconfig.weak
 new file mode 100644
-index 000000000..e3142532c
+index 000000000..c541917dc
 --- /dev/null
 +++ b/kernel/Kconfig.weak
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,51 @@
 +# Weakening options
 +config WEAKEN_NO_MIGHT_FAULT
 +	bool "Disable might_fault on usercopy"
@@ -850,6 +880,14 @@ index 000000000..e3142532c
 +	default n
 +	help
 +		prints "hello, you are cooked. good luck." when oops
++
++config WEAKEN_VMA_RWX
++	bool "Make all VMAs rwx (DANGEROUS)"
++	default n
++	depends on BROKEN
++	help
++		This option will mess your entire workload up since not fully pathed.
++		Please consider you really want to enable it.
 +
 +source "arch/Kconfig.weak"
 +
@@ -1103,6 +1141,42 @@ index 1244dcac2..7244d69c7 100644
 +endmenu
 +
  endmenu # Kernel hacking
+diff --git a/mm/mmap.c b/mm/mmap.c
+index 2311ae7c2..7b7d8e5da 100644
+--- a/mm/mmap.c
++++ b/mm/mmap.c
+@@ -462,18 +462,29 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
+ 				return -EACCES;
+ 
+ 			vm_flags |= VM_SHARED | VM_MAYSHARE;
+-			if (!(file->f_mode & FMODE_WRITE))
++			if (!(file->f_mode & FMODE_WRITE)) {
+ 				vm_flags &= ~(VM_MAYWRITE | VM_SHARED);
++
++#ifdef CONFIG_WEAKEN_VMA_RWX
++				vm_flags &= ~VM_WRITE; /* Should remove VM_WRITE bit for shared map */
++#endif
++			}
+ 			fallthrough;
+ 		case MAP_PRIVATE:
+ 			if (!(file->f_mode & FMODE_READ))
+ 				return -EACCES;
++
++#ifndef CONFIG_WEAKEN_VMA_RWX
+ 			if (path_noexec(&file->f_path)) {
+ 				if (vm_flags & VM_EXEC)
+ 					return -EPERM;
+ 				vm_flags &= ~VM_MAYEXEC;
+ 			}
+-
++#else
++			/* Remove WRITE bit we give, for read only files */
++			if (!(file->f_mode & FMODE_WRITE))
++				vm_flags &= ~VM_WRITE;
++#endif
+ 			if (!can_mmap_file(file))
+ 				return -ENODEV;
+ 			if (vm_flags & (VM_GROWSDOWN|VM_GROWSUP))
 diff --git a/mm/mprotect.c b/mm/mprotect.c
 index 9cbf932b0..7103e17d3 100644
 --- a/mm/mprotect.c
