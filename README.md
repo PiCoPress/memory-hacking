@@ -1,9 +1,9 @@
 # memory-hacking
 I would like to hack my computer with the custom kernel and my scripts. You should run in a VM... Have fun
 
-<img src="./Screenshot 2025-11-03 002714.png">
-<img src="./Screenshot 2026-06-30 233420.png">
-<img src="./Screenshot 2026-07-01 002716.png">
+<img src="./images/Screenshot 2025-11-03 002714.png">
+<img src="./images/Screenshot 2026-06-30 233420.png">
+<img src="./images/Screenshot 2026-07-01 002716.png">
 
 # Patch file
 This patch file patches Linux kernel source code based version 7.1.0. hehe!
