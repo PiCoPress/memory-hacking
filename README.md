@@ -6,7 +6,7 @@ I would like to hack my computer with the custom kernel and my scripts. You shou
 <img src="./images/Screenshot 2026-07-01 002716.png">
 
 # Patch file
-This patch file patches Linux kernel source code based version 7.1.0. hehe!
+This patch file patches Linux kernel source code based version 7.1.8. hehe!
 Please refer the patch file for more information.
 
 # Testing
