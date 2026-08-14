@@ -1,8 +1,8 @@
 diff --git a/Makefile b/Makefile
-index fae409cd5..60d6209eb 100644
+index fa62d2054..14f76304d 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -1210,6 +1210,10 @@ include $(addprefix $(srctree)/, $(include-y))
+@@ -1201,6 +1201,10 @@ include $(addprefix $(srctree)/, $(include-y))
  # Do not add $(call cc-option,...) below this line. When you build the kernel
  # from the clean source tree, the GCC plugins do not exist at this point.
  
@@ -137,7 +137,7 @@ index 000000000..c89a967f1
 +
 +#endif /* _ASM_X86_INSN_WEAK_H */
 diff --git a/arch/x86/include/asm/pgtable.h b/arch/x86/include/asm/pgtable.h
-index ac295ca6c..a7f79b49d 100644
+index 2187e9cfc..9f77681a1 100644
 --- a/arch/x86/include/asm/pgtable.h
 +++ b/arch/x86/include/asm/pgtable.h
 @@ -1024,8 +1024,13 @@ static inline unsigned long pmd_page_vaddr(pmd_t pmd)
@@ -267,10 +267,10 @@ index 2ec250ba4..435795756 100644
  
  #define __PAGE_KERNEL_IO		__PAGE_KERNEL
 diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
-index a3df21d26..43c82f202 100644
+index a4268c47f..baefb0e37 100644
 --- a/arch/x86/kernel/cpu/common.c
 +++ b/arch/x86/kernel/cpu/common.c
-@@ -2057,8 +2057,13 @@ static void identify_cpu(struct cpuinfo_x86 *c)
+@@ -2061,8 +2061,13 @@ static void identify_cpu(struct cpuinfo_x86 *c)
  	/* Disable the PN if appropriate */
  	squash_the_stupid_serial_number(c);
  
@@ -341,7 +341,7 @@ index b10684ded..05d34b392 100644
  			current->thread.trap_nr, SIGSEGV) == NOTIFY_STOP)
  		return 1;
 diff --git a/arch/x86/kernel/traps.c b/arch/x86/kernel/traps.c
-index 30aa83699..7fa31f125 100644
+index 0ca3912ec..e89ab279c 100644
 --- a/arch/x86/kernel/traps.c
 +++ b/arch/x86/kernel/traps.c
 @@ -72,6 +72,10 @@
@@ -453,10 +453,10 @@ index 000000000..6db3e1ef1
 +	return 0;
 +}
 diff --git a/arch/x86/mm/fault.c b/arch/x86/mm/fault.c
-index 45b99c3b1..f6bafd07d 100644
+index 63de8e868..6f33212cf 100644
 --- a/arch/x86/mm/fault.c
 +++ b/arch/x86/mm/fault.c
-@@ -37,6 +37,10 @@
+@@ -36,6 +36,10 @@
  #include <asm/fred.h>
  #include <asm/sev.h>			/* snp_dump_hva_rmpentry()	*/
  
@@ -467,7 +467,7 @@ index 45b99c3b1..f6bafd07d 100644
  #define CREATE_TRACE_POINTS
  #include <trace/events/exceptions.h>
  
-@@ -828,8 +832,17 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
+@@ -819,8 +823,17 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
  
  	if (si_code == SEGV_PKUERR)
  		force_sig_pkuerr((void __user *)address, pkey);
@@ -655,7 +655,7 @@ index d023a40a1..7b033e28a 100644
  
  int set_memory_np(unsigned long addr, int numpages)
 diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
-index 1023acadd..1dced943a 100644
+index af43d1770..b5e32faaa 100644
 --- a/arch/x86/mm/tlb.c
 +++ b/arch/x86/mm/tlb.c
 @@ -1745,11 +1745,11 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
@@ -754,7 +754,7 @@ index f1dd417e5..ac4ecfacd 100644
  void check_panic_on_warn(const char *origin);
  extern void oops_enter(void);
 diff --git a/include/linux/uaccess.h b/include/linux/uaccess.h
-index eddbbb65c..edb06baad 100644
+index 9d39b640f..1f3b44dc8 100644
 --- a/include/linux/uaccess.h
 +++ b/include/linux/uaccess.h
 @@ -112,7 +112,10 @@ __copy_from_user(void *to, const void __user *from, unsigned long n)
@@ -933,10 +933,10 @@ index dc770b9a6..aca1e2fd4 100644
  	/* Check limit counter and decrease it.*/
  	limit = (kexec_image_type == KEXEC_TYPE_CRASH) ?
 diff --git a/kernel/panic.c b/kernel/panic.c
-index 213725b61..a06630541 100644
+index 20feada53..690b83975 100644
 --- a/kernel/panic.c
 +++ b/kernel/panic.c
-@@ -250,10 +250,12 @@ static __init int kernel_panic_sysfs_init(void)
+@@ -249,10 +249,12 @@ static __init int kernel_panic_sysfs_init(void)
  late_initcall(kernel_panic_sysfs_init);
  #endif
  
@@ -949,7 +949,7 @@ index 213725b61..a06630541 100644
  
  /* Returns how long it waited in ms */
  long (*panic_blink)(int state);
-@@ -285,6 +287,7 @@ void __weak __noreturn nmi_panic_self_stop(struct pt_regs *regs)
+@@ -284,6 +286,7 @@ void __weak __noreturn nmi_panic_self_stop(struct pt_regs *regs)
   */
  void __weak crash_smp_send_stop(void)
  {
@@ -957,7 +957,7 @@ index 213725b61..a06630541 100644
  	static int cpus_stopped;
  
  	/*
-@@ -301,6 +304,7 @@ void __weak crash_smp_send_stop(void)
+@@ -300,6 +303,7 @@ void __weak crash_smp_send_stop(void)
  	 */
  	smp_send_stop();
  	cpus_stopped = 1;
@@ -965,7 +965,7 @@ index 213725b61..a06630541 100644
  }
  
  atomic_t panic_cpu = ATOMIC_INIT(PANIC_CPU_INVALID);
-@@ -362,6 +366,7 @@ int __weak panic_smp_redirect_cpu(int target_cpu, void *msg)
+@@ -361,6 +365,7 @@ int __weak panic_smp_redirect_cpu(int target_cpu, void *msg)
  	return smp_call_function_single_async(target_cpu, &panic_csd);
  }
  
@@ -973,7 +973,7 @@ index 213725b61..a06630541 100644
  /**
   * panic_try_force_cpu - Redirect panic to a specific CPU for crash kernel
   * @fmt: panic message format string
-@@ -441,12 +446,15 @@ static bool panic_try_force_cpu(const char *fmt, va_list args)
+@@ -440,12 +445,15 @@ static bool panic_try_force_cpu(const char *fmt, va_list args)
  	/* IPI/NMI sent, this CPU should stop */
  	return true;
  }
@@ -989,7 +989,7 @@ index 213725b61..a06630541 100644
  #endif /* CONFIG_SMP && CONFIG_CRASH_DUMP */
  
  bool panic_try_start(void)
-@@ -530,6 +538,8 @@ void check_panic_on_warn(const char *origin)
+@@ -529,6 +537,8 @@ void check_panic_on_warn(const char *origin)
  		      origin, limit);
  }
  
@@ -998,7 +998,7 @@ index 213725b61..a06630541 100644
  static void panic_trigger_all_cpu_backtrace(void)
  {
  	/* Temporary allow non-panic CPUs to write their backtraces. */
-@@ -566,6 +576,7 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
+@@ -565,6 +575,7 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
  	else
  		crash_smp_send_stop();
  }
@@ -1006,7 +1006,7 @@ index 213725b61..a06630541 100644
  
  /**
   * vpanic - halt the system
-@@ -577,10 +588,14 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
+@@ -576,10 +587,14 @@ static void panic_other_cpus_shutdown(bool crash_kexec)
  void vpanic(const char *fmt, va_list args)
  {
  	static char buf[PANIC_MSG_BUFSZ];
@@ -1023,7 +1023,7 @@ index 213725b61..a06630541 100644
  	if (panic_on_warn) {
  		/*
  		 * This thread may hit another WARN() in the panic path.
-@@ -597,6 +612,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -596,6 +611,8 @@ void vpanic(const char *fmt, va_list args)
  	 * there is nothing to prevent an interrupt handler (that runs
  	 * after setting panic_cpu) from invoking panic() again.
  	 */
@@ -1032,7 +1032,7 @@ index 213725b61..a06630541 100644
  	local_irq_disable();
  	preempt_disable_notrace();
  
-@@ -609,6 +626,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -608,6 +625,7 @@ void vpanic(const char *fmt, va_list args)
  		set_cpu_online(smp_processor_id(), false);
  		panic_smp_self_stop();
  	}
@@ -1040,7 +1040,7 @@ index 213725b61..a06630541 100644
  	/*
  	 * It's possible to come here directly from a panic-assertion and
  	 * not have preempt disabled. Some functions called from here want
-@@ -629,9 +647,14 @@ void vpanic(const char *fmt, va_list args)
+@@ -628,9 +646,14 @@ void vpanic(const char *fmt, va_list args)
  		/* go ahead */
  	} else if (panic_on_other_cpu())
  		panic_smp_self_stop();
@@ -1055,7 +1055,7 @@ index 213725b61..a06630541 100644
  	len = vscnprintf(buf, sizeof(buf), fmt, args);
  
  	if (len && buf[len - 1] == '\n')
-@@ -657,6 +680,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -656,6 +679,7 @@ void vpanic(const char *fmt, va_list args)
  	 * the other CPUs or else we won't be able to debug processes left
  	 * running on them.
  	 */
@@ -1063,7 +1063,7 @@ index 213725b61..a06630541 100644
  	kgdb_panic(buf);
  
  	/*
-@@ -671,7 +695,9 @@ void vpanic(const char *fmt, va_list args)
+@@ -670,7 +694,9 @@ void vpanic(const char *fmt, va_list args)
  		__crash_kexec(NULL);
  
  	panic_other_cpus_shutdown(_crash_kexec_post_notifiers);
@@ -1074,7 +1074,7 @@ index 213725b61..a06630541 100644
  	printk_legacy_allow_panic_sync();
  
  	/*
-@@ -706,6 +732,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -705,6 +731,7 @@ void vpanic(const char *fmt, va_list args)
  	 * should be disabled to avoid reporting bad unlock balance when
  	 * panic() is not being callled from OOPS.
  	 */
@@ -1082,7 +1082,7 @@ index 213725b61..a06630541 100644
  	debug_locks_off();
  	console_flush_on_panic(CONSOLE_FLUSH_PENDING);
  
-@@ -742,6 +769,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -741,6 +768,8 @@ void vpanic(const char *fmt, va_list args)
  			reboot_mode = panic_reboot_mode;
  		emergency_restart();
  	}
@@ -1091,7 +1091,7 @@ index 213725b61..a06630541 100644
  #ifdef __sparc__
  	{
  		extern int stop_a_enabled;
-@@ -756,6 +785,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -755,6 +784,7 @@ void vpanic(const char *fmt, va_list args)
  #endif
  	pr_emerg("---[ end Kernel panic - not syncing: %s ]---\n", buf);
  
@@ -1099,7 +1099,7 @@ index 213725b61..a06630541 100644
  	/* Do not scroll important messages printed above */
  	suppress_printk = 1;
  
-@@ -766,8 +796,8 @@ void vpanic(const char *fmt, va_list args)
+@@ -765,8 +795,8 @@ void vpanic(const char *fmt, va_list args)
  	 */
  	console_flush_on_panic(CONSOLE_FLUSH_PENDING);
  	nbcon_atomic_flush_unsafe();
@@ -1109,7 +1109,7 @@ index 213725b61..a06630541 100644
  	for (i = 0; ; i += PANIC_TIMER_STEP) {
  		touch_softlockup_watchdog();
  		if (i >= i_next) {
-@@ -776,6 +806,7 @@ void vpanic(const char *fmt, va_list args)
+@@ -775,6 +805,7 @@ void vpanic(const char *fmt, va_list args)
  		}
  		mdelay(PANIC_TIMER_STEP);
  	}
@@ -1117,7 +1117,7 @@ index 213725b61..a06630541 100644
  }
  EXPORT_SYMBOL(vpanic);
  
-@@ -1039,6 +1070,10 @@ bool oops_may_print(void)
+@@ -1038,6 +1069,10 @@ bool oops_may_print(void)
   */
  void oops_enter(void)
  {
@@ -1129,10 +1129,10 @@ index 213725b61..a06630541 100644
  	tracing_off();
  	/* can't trust the integrity of the kernel anymore: */
 diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
-index 1244dcac2..7244d69c7 100644
+index 040f4e077..2b609ea18 100644
 --- a/lib/Kconfig.debug
 +++ b/lib/Kconfig.debug
-@@ -3642,4 +3642,8 @@ config RUST_INLINE_HELPERS
+@@ -3632,4 +3632,8 @@ config RUST_INLINE_HELPERS
  
  endmenu # "Rust"
  
@@ -1217,12 +1217,12 @@ index 9cbf932b0..7103e17d3 100644
  		/* Allow architectures to sanity-check the new flags */
  		if (!arch_validate_flags(newflags)) {
 diff --git a/scripts/Makefile.lib b/scripts/Makefile.lib
-index 0a4fdd8bd..dd25f0106 100644
+index 0718e39ce..3fa1b73a1 100644
 --- a/scripts/Makefile.lib
 +++ b/scripts/Makefile.lib
-@@ -208,7 +208,7 @@ objtool-args-$(CONFIG_HAVE_STATIC_CALL_INLINE)		+= --static-call
- objtool-args-$(CONFIG_HAVE_UACCESS_VALIDATION)		+= --uaccess
+@@ -202,7 +202,7 @@ objtool-args-$(CONFIG_HAVE_UACCESS_VALIDATION)		+= --uaccess
  objtool-args-$(or $(CONFIG_GCOV_KERNEL),$(CONFIG_KCOV))	+= --no-unreachable
+ objtool-args-$(CONFIG_PREFIX_SYMBOLS)			+= --prefix=$(CONFIG_FUNCTION_PADDING_BYTES)
  objtool-args-$(CONFIG_OBJTOOL_WERROR)			+= --werror
 -
 +objtool-args-$(CONFIG_WEAKEN_IGNORE_PANIC)              += --ignpanic
@@ -1230,10 +1230,10 @@ index 0a4fdd8bd..dd25f0106 100644
  	$(if $(delay-objtool), --link)					\
  	$(if $(part-of-module), --module)
 diff --git a/tools/objtool/builtin-check.c b/tools/objtool/builtin-check.c
-index 118c3de2f..9a0d8d269 100644
+index b780df513..ae923ec5b 100644
 --- a/tools/objtool/builtin-check.c
 +++ b/tools/objtool/builtin-check.c
-@@ -107,6 +107,7 @@ static const struct option check_options[] = {
+@@ -108,6 +108,7 @@ static const struct option check_options[] = {
  	OPT_BOOLEAN('v',	 "verbose", &opts.verbose, "verbose warnings"),
  	OPT_BOOLEAN(0,		 "werror", &opts.werror, "return error on warnings"),
  	OPT_BOOLEAN(0,		 "wide", &opts.wide, "wide output"),
@@ -1242,10 +1242,10 @@ index 118c3de2f..9a0d8d269 100644
  	OPT_END(),
  };
 diff --git a/tools/objtool/check.c b/tools/objtool/check.c
-index 10b18cf9c..5d3a7dfe4 100644
+index 4bcff2272..135e1aa31 100644
 --- a/tools/objtool/check.c
 +++ b/tools/objtool/check.c
-@@ -245,8 +245,15 @@ static bool __dead_end_function(struct objtool_file *file, struct symbol *func,
+@@ -251,8 +251,15 @@ static bool __dead_end_function(struct objtool_file *file, struct symbol *func,
  			return true;
  
  		for (i = 0; i < ARRAY_SIZE(global_noreturns); i++)
@@ -1263,10 +1263,10 @@ index 10b18cf9c..5d3a7dfe4 100644
  
  	if (is_weak_sym(func))
 diff --git a/tools/objtool/include/objtool/builtin.h b/tools/objtool/include/objtool/builtin.h
-index e844e9c82..09c7e7289 100644
+index b9e229ed4..53b8aafe9 100644
 --- a/tools/objtool/include/objtool/builtin.h
 +++ b/tools/objtool/include/objtool/builtin.h
-@@ -47,6 +47,7 @@ struct opts {
+@@ -46,6 +46,7 @@ struct opts {
  	bool verbose;
  	bool werror;
  	bool wide;
