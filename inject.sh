@@ -4,8 +4,8 @@
 # Limitation: Can't write null byte due to bash restriction
 # Well, do I need to port it to perl?..
 
-MEMSIZE=$(lsmem --summary=never -n -o RANGE | tail -n1 | cut -d'-' -f2)
-MEMSIZE=$(($MEMSIZE))
+MEMSIZE=$(lsmem --summary=never -n -o RANGE | tail -n1 | cut -d'-' -f2);
+MEMSIZE=$(($MEMSIZE));
 
 function rand() {
 	# $1: max value (64bit positive integer expected)
@@ -26,10 +26,7 @@ function injection() {
 
 	if [[ -z $dump ]]; # no filename specified
 	then
-		for ((i = 0; i < $perf; i += 1));
-		do
-			dd status=none if=/dev/urandom of=/dev/mem bs=1 count=$len seek=$(rand $MEMSIZE);
-		done
+		perl ./perf.pl $MEMSIZE $perf $len;
 	else
 		echo "================" >> $dump;
 		printf 'len=%d\tperf=%d\n' $len $perf >> $dump;
@@ -47,4 +44,4 @@ function injection() {
 	fi
 }
 
-alias inj="injection"
+alias inj="injection";
