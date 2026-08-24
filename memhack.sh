@@ -120,9 +120,6 @@ case $1 in
             dd if=/proc/$2/mem bs=1 skip=$addr count=$len status=none | hexdump -Cv | $flag
         fi
     ;;
-	reproduce | rep )
-		# TODO
-	;;
     memsize | ms )
         out=$(lsmem --summary=never -n -o RANGE | tail -n1 | cut -d'-' -f2)
         echo -e "[physical memory size]"
@@ -150,9 +147,6 @@ case $1 in
                 "\t\t\t\tPAGEINDEX: a number to put some payload, on valist"
         echo -e "\tvs, vaset\t[PID] [PAGEINDEX] [OFFSET] [SIZE] [VALUE=0], 0 <= VALUE"
         echo -e "\tvg, vaget\t[PID] [PAGEINDEX] [OFFSET] [LENGTH=256] [--raw]?"
-		echo -e "\treproduce, rep\t[FILE] [INDEX], Reproduce memory modification"
-		echo -e "\t\t\t\t\tfrom given dump file. You can select section index"
-		echo -e "\t\t\t\t\tseparated by =*16 str."
         echo -e "\n=== INFORMATION ==="
         echo -e "\tmemsize, ms"
         echo -e "\treference, ref"
